@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 import re
 import shutil
+import sys
 
 from common import ROOT, DEPS, LOCK, dependency, digest, fetch, run
 
@@ -21,12 +22,12 @@ def main():
         parser.error("title must use PPSA followed by five digits")
 
     source = dependency("filesystemHelper")
-    run(["python3", ROOT / "tools/test_helper_credentials.py", source,
+    run([sys.executable, ROOT / "tools/test_helper_credentials.py", source,
          args.output / "credential-tests"])
     logging = DEPS / "filesystemHelperLogging"
     pinned = LOCK["filesystemHelperLogging"]
     fetch(pinned["url"], logging / "ps5log.h", pinned["sha256"])
-    run(["python3", source / "tools/build_owned_daemon.py",
+    run([sys.executable, source / "tools/build_owned_daemon.py",
          "--sdk", args.sdk.resolve(), "--logging-client", logging,
          "--elf-helper", "--title", args.title])
     built = source / f"build/owned_root_helper-{args.title}"

@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased — the CLI uses the project's .venv
+
+- `npm run build`, `dev` and the rest ran whatever `python3` was on PATH, so they lost Pillow when
+  Homebrew moved to a new Python, and the package's last check failed. The CLI now runs under
+  `.venv/bin/python3` when it exists, and the steps it starts under the same interpreter.
+
 ## Unreleased — comparing upscalers
 
 - `<Video compare={{upscale, split}}>` (native ABI v15, `video.setCompare`): right of `split` (0 to 1

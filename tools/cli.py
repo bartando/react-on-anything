@@ -13,6 +13,11 @@ import subprocess
 import sys
 import time
 
+# npm runs whatever python3 is on PATH; the project's .venv (README, Setup) is the one with Pillow.
+VENV_PYTHON = Path(__file__).resolve().parent.parent / ".venv" / "bin" / "python3"
+if VENV_PYTHON.exists() and Path(sys.prefix).resolve() != VENV_PYTHON.parent.parent.resolve():
+    os.execv(VENV_PYTHON, [str(VENV_PYTHON), *sys.argv])
+
 from common import ROOT, app_config, app_files, bundle, dependency, layout_directory, layouts, run, stb_image
 from rar_worker import build_host
 from text_fonts import harfbuzz, sheenbidi
@@ -66,15 +71,15 @@ def desktop(app, test=False, target="ps5-react-preview", resolution=None):
             log=ROOT / ".build/tailwind-test.log")
         if app != ROOT / "apps/starter":
             raise ValueError("The scripted UI test belongs to starter; use preview for other apps")
-        run(["python3", ROOT / "tools/test_resources.py"], log=ROOT / ".build/resource-test.log")
-        run(["python3", ROOT / "tools/test_archives.py"], log=ROOT / ".build/archive-test.log")
-        run(["python3", ROOT / "tools/test_removals.py"], log=ROOT / ".build/removal-test.log")
-        run(["python3", ROOT / "tools/test_network.py"], log=ROOT / ".build/network-test.log")
-        run(["python3", ROOT / "tools/test_images.py"], log=ROOT / ".build/image-test.log")
-        run(["python3", ROOT / "tools/test_text.py"], log=ROOT / ".build/text-test.log")
-        run(["python3", ROOT / "tools/test_video.py"], log=ROOT / ".build/video-test.log")
-        run(["python3", ROOT / "tools/test_passthrough.py"], log=ROOT / ".build/passthrough-test.log")
-        run(["python3", ROOT / "tools/test_browser_capture.py"], log=ROOT / ".build/browser-capture-test.log")
+        run([sys.executable, ROOT / "tools/test_resources.py"], log=ROOT / ".build/resource-test.log")
+        run([sys.executable, ROOT / "tools/test_archives.py"], log=ROOT / ".build/archive-test.log")
+        run([sys.executable, ROOT / "tools/test_removals.py"], log=ROOT / ".build/removal-test.log")
+        run([sys.executable, ROOT / "tools/test_network.py"], log=ROOT / ".build/network-test.log")
+        run([sys.executable, ROOT / "tools/test_images.py"], log=ROOT / ".build/image-test.log")
+        run([sys.executable, ROOT / "tools/test_text.py"], log=ROOT / ".build/text-test.log")
+        run([sys.executable, ROOT / "tools/test_video.py"], log=ROOT / ".build/video-test.log")
+        run([sys.executable, ROOT / "tools/test_passthrough.py"], log=ROOT / ".build/passthrough-test.log")
+        run([sys.executable, ROOT / "tools/test_browser_capture.py"], log=ROOT / ".build/browser-capture-test.log")
         command.append("--self-test")
     return command, build
 
@@ -207,7 +212,7 @@ def main():
             parent = args.dir.expanduser().resolve() if args.dir else ROOT / "apps"
             return create(args.name, args.title_id, args.title, parent)
         if args.command == "build":
-            cmd = ["python3", ROOT / "tools/build_ps5.py", "--app-dir", app]
+            cmd = [sys.executable, ROOT / "tools/build_ps5.py", "--app-dir", app]
             sdk = args.sdk or os.environ.get("PS5_PAYLOAD_SDK")
             if sdk: cmd.extend(["--payload-sdk", sdk])
             run(cmd)
