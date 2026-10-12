@@ -11,6 +11,7 @@ from pathlib import Path
 import shutil
 import shlex
 import subprocess
+import sys
 import tarfile
 import urllib.request
 import zipfile
@@ -95,9 +96,9 @@ def main():
     access_client = dependency("filesystemHelperClient") if config.get("filesystemAccess") == "console" else None
     helper = BUILD / "filesystem-helper"
     if access_client:
-        run(["python3", ROOT / "tools/test_filesystem_access.py", access_client, BUILD / "access-tests"],
+        run([sys.executable, ROOT / "tools/test_filesystem_access.py", access_client, BUILD / "access-tests"],
             log=BUILD / "filesystem-access-tests.log")
-        run(["python3", ROOT / "tools/build_filesystem_helper.py", TITLE, helper, "--sdk", sdk],
+        run([sys.executable, ROOT / "tools/build_filesystem_helper.py", TITLE, helper, "--sdk", sdk],
             env=env, log=BUILD / "filesystem-helper.log")
     archive_ports = ports()
     network_ports = archive_ports if config.get("networking") else None
@@ -360,7 +361,7 @@ def main():
     with zipfile.ZipFile(ROOT / "dist" / (TITLE + ".zip"), "w", zipfile.ZIP_DEFLATED) as package:
         for path in sorted(app.rglob("*")):
             if path.is_file(): package.write(path, path.relative_to(app.parent))
-    run(["python3", ROOT / "tools/verify.py", TITLE])
+    run([sys.executable, ROOT / "tools/verify.py", TITLE])
     print(f"Local title build complete: {app}")
 
 if __name__ == "__main__":
