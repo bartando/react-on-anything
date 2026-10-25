@@ -29,7 +29,7 @@ void er_register_assets(void);
 #include "damage_tracker.hpp"
 #include "frame_stats.hpp"
 #include "canvas_trace.hpp"
-#include "gpu_mirror.hpp"
+#include "gpu_renderer.hpp"
 #include "gl_presenter.hpp"
 #include "host_api.hpp"
 #include "host_platform.hpp"
@@ -159,7 +159,7 @@ struct Host {
   bool skip_still = false, exposed = false;
   int render_worker_count = 1;
   bool tracing = false;
-  GpuMirror mirror;
+  GpuRenderer gpu;
   Uint32 previous_tick = 0, next_repeat = 0, next_image_stats = 0;
   // When the last frame callback ran: the next one advances by the whole frame period, swap wait included.
   std::int64_t previous_step_us = 0;
@@ -182,7 +182,7 @@ struct Host {
 
   ~Host() {
     if (tracing) canvas_trace::stop();
-    mirror.stop();
+    gpu.stop();
     ps5_react_stop_images();
     archives::stop();
     browser_capture::stop();
@@ -238,17 +238,20 @@ struct Host {
     er_set_layers_enabled((!layers || std::atoi(layers) != 0) && presenter.layers_supported());
     // PS5_REACT_RENDER_WORKERS=1 renders single-core, for comparisons.
     const char* workers = std::getenv("PS5_REACT_RENDER_WORKERS");
-    // The GPU mirror needs the ops in drawing order: one worker.
-    const bool mirroring = std::getenv("PS5_REACT_GPU_MIRROR") != nullptr;
-    render_worker_count = render_workers::start(mirroring ? 1
+    // The GPU renderer needs the ops in drawing order: one worker.
+    const bool gpu_drawing = std::getenv("PS5_REACT_GPU") != nullptr;
+    const bool gpu_mirroring = !gpu_drawing && std::getenv("PS5_REACT_GPU_MIRROR") != nullptr;
+    render_worker_count = render_workers::start(gpu_drawing || gpu_mirroring ? 1
                                                 : workers && std::atoi(workers) > 0 ? std::atoi(workers)
                                                                                     : render_workers::available_cpus());
     std::printf("[PS5-REACT] render workers=%d of %d, cpus=%d\n", render_worker_count, render_workers::max_workers(),
                 render_workers::available_cpus());
     // PS5_REACT_CANVAS_TRACE=<file> lists every drawing primitive per commit (canvas_trace.hpp).
-    // PS5_REACT_GPU_MIRROR=1 also draws every commit with OpenGL and compares the two at each shot.
-    if (mirroring) {
-      if (!mirror.start(width, height)) std::fprintf(stderr, "[PS5-REACT] gpu mirror: could not start\n");
+    // PS5_REACT_GPU=1 draws with OpenGL instead of the software rasterizer (gpu_renderer.hpp);
+    // PS5_REACT_GPU_MIRROR=1 draws with both and compares the two at each shot.
+    if (gpu_drawing || gpu_mirroring) {
+      if (!gpu.start(width, height, gpu_drawing ? GpuRenderer::Mode::draw : GpuRenderer::Mode::mirror))
+        std::fprintf(stderr, "[PS5-REACT] gpu renderer: could not start\n");
     } else if (const char* trace = std::getenv("PS5_REACT_CANVAS_TRACE")) {
       tracing = canvas_trace::start(trace, render_worker_count);
       if (!tracing) std::fprintf(stderr, "[PS5-REACT] canvas trace: cannot write %s\n", trace);
@@ -417,11 +420,13 @@ struct Host {
       // The preview keeps shots in the sandbox's temporary folder rather than the app's sources.
       char path[PATH_MAX];
       const std::string name = std::string("/temp0/") + (action + 5) + ".bmp";
-      const bool saved = host::resolve_path(name.c_str(), path, sizeof path) && save_screenshot(path);
+      // With the GPU drawing, the software framebuffer holds only what it left to the CPU.
+      const bool saved = host::resolve_path(name.c_str(), path, sizeof path) &&
+                         (gpu.drawing() ? gpu.save_screen(presenter, path) : save_screenshot(path));
       std::printf("[PS5-REACT] shot %s: %s\n", path, saved ? "saved" : std::strerror(errno));
-      if (saved && mirror.active()) {
+      if (saved && gpu.active() && !gpu.drawing()) {
         const std::string base(path, std::strlen(path) - 4);
-        std::printf("[PS5-REACT] %s\n", mirror.compare(er_software_framebuffer(), presenter, base).c_str());
+        std::printf("[PS5-REACT] %s\n", gpu.compare(er_software_framebuffer(), presenter, base).c_str());
       }
     } else if (!std::strncmp(action, "touch:", 6)) {
       float x = 0, y = 0;
@@ -506,7 +511,7 @@ struct Host {
     if (tracing) canvas_trace::commit_begin();
     er_commit();
     if (tracing) canvas_trace::commit_end();
-    if (mirror.active()) mirror.replay();
+    if (gpu.active()) gpu.replay();
     stats.lap(FrameStats::update, now_us());
     if (ps5_react_exit_requested()) {
       running = false;
@@ -524,7 +529,10 @@ struct Host {
       const ERLayer* layers = er_get_layers(&layer_count);
       presenter.set_layers({layers, static_cast<std::size_t>(layer_count)});
       video_layers::update(now_us(), display_frame_us);
-      if (!presenter.draw(er_software_framebuffer(), damage_tracker_rects(), damage_tracker_moves(), sw, sh)) return false;
+      const bool drawn = gpu.drawing() ? presenter.draw_texture(gpu.texture(), sw, sh)
+                                       : presenter.draw(er_software_framebuffer(), damage_tracker_rects(),
+                                                        damage_tracker_moves(), sw, sh);
+      if (!drawn) return false;
       er_perf_phase_end(ER_PERF_PHASE_PRESENT);
       {
         const GlPresenter::Timing& t = presenter.last_timing();

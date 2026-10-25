@@ -498,6 +498,18 @@ bool GlPresenter::present(int sw, int sh) {
   return glGetError() == GL_NO_ERROR;
 }
 
+bool GlPresenter::draw_texture(unsigned int frame, int sw, int sh) {
+  if (!composite_program_ || !frame || sw <= 0 || sh <= 0) return false;
+  timing_ = {};
+  synced_ = false;
+  frame_override_ = frame;
+  const auto drawing = std::chrono::steady_clock::now();
+  const bool ok = present(sw, sh);
+  timing_.draw_us = micros_since(drawing);
+  frame_override_ = 0;
+  return ok;
+}
+
 void GlPresenter::composite_to(unsigned int fbo, unsigned int frame) {
   // The layers as last presented: the engine's own list is valid only until the commit after it.
   std::vector<ERLayer> layers;

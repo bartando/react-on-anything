@@ -165,5 +165,6 @@ skips the software drawing; one that answers capture gets the op's pixels, drawn
 the CPU into a buffer of their own. `PS5_REACT_CANVAS_TRACE=<file>` lists what the desktop
 preview draws per commit, run with `PS5_REACT_RENDER_WORKERS=1` for drawing order.
 `PS5_REACT_GPU_MIRROR=1` draws every commit again with OpenGL from those ops and compares
-the two pictures at each `shot:`. No part depends on RNPS,
+the two screens at each `shot:`; `PS5_REACT_GPU=1` draws with OpenGL alone
+(`native/shared/gpu_renderer.hpp`). No part depends on RNPS,
 Sony bundle signature bypasses, or changing the system home screen.

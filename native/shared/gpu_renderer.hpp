@@ -10,14 +10,15 @@
 #include <unordered_map>
 #include <vector>
 
-// Draws the engine's canvas ops (er_canvas.h) with OpenGL, beside the software rasterizer rather than
-// instead of it: the engine still rasterizes every pixel into its framebuffer, and the mirror replays the
-// same ops into a texture of its own after each commit. Comparing the two shows how far the GPU renderer
-// has come, op kind by op kind, before it is trusted to draw alone.
+// Draws the engine's canvas ops (er_canvas.h) with OpenGL into a texture of its own, replaying each
+// commit's ops after it. It runs one of two ways:
+// - Mirror: beside the software rasterizer rather than instead of it. The engine still rasterizes every
+//   pixel into its framebuffer, and compare() shows how far apart the two pictures are.
+// - Draw: instead of it. The engine skips what the renderer draws, and the presenter shows its texture.
 //
-// The mirror takes the ops a GPU renderer would take: one it can draw stands for everything nested in it
-// (a bordered rect for its two fills), one it cannot (text, for now) leaves its parts to it. Shapes it has
-// no shader for yet (shadows, focus sweeps, arcs, vector icons) it has the engine capture: rasterized into a
+// It takes the ops a GPU renderer would take: one it can draw stands for everything nested in it (a
+// bordered rect for its two fills), one it cannot (text, for now) leaves its parts to it. Shapes it has no
+// shader for yet (shadows, focus sweeps, arcs, vector icons) it has the engine capture: rasterized into a
 // buffer of their own and handed over as pixels. What it cannot draw at all is missing from its picture,
 // and listed by compare().
 //
@@ -25,17 +26,22 @@
 // engine must run one render worker, so the ops arrive in drawing order.
 class GlPresenter;
 
-class GpuMirror {
+class GpuRenderer {
 public:
-  GpuMirror() = default;
-  GpuMirror(const GpuMirror&) = delete;
-  GpuMirror& operator=(const GpuMirror&) = delete;
-  ~GpuMirror();
+  GpuRenderer() = default;
+  GpuRenderer(const GpuRenderer&) = delete;
+  GpuRenderer& operator=(const GpuRenderer&) = delete;
+  ~GpuRenderer();
+
+  enum class Mode { mirror, draw };
 
   // With the GL context current. Installs the canvas.
-  bool start(int width, int height);
+  bool start(int width, int height, Mode mode);
   void stop();
   bool active() const { return target_.fbo != 0; }
+  bool drawing() const { return active() && mode_ == Mode::draw; }
+  // The picture, laid out like the software framebuffer (row 0 at the top), premultiplied.
+  unsigned int texture() const { return target_.texture; }
 
   // Draws the ops recorded since the last replay into the mirror's texture: a commit's, and any drawn
   // outside one (the first frame is drawn while the app boots). Leaves the framebuffer binding,
@@ -47,6 +53,8 @@ public:
   // and writes the two screens and their difference next to `path` (path-cpu.bmp, path-gpu.bmp,
   // path-diff.bmp), half size. With the GL context current, after the frame was presented.
   std::string compare(const std::uint32_t* cpu, GlPresenter& presenter, const std::string& path);
+  // Writes the screen as the presenter shows the renderer's picture to `path` (a BMP, half size).
+  bool save_screen(GlPresenter& presenter, const std::string& path);
 
 private:
   struct Target { unsigned int texture = 0, fbo = 0; int width = 0, height = 0; };
@@ -58,6 +66,14 @@ private:
   Target copy_;    // scratch for scroll moves
   Target screen_;  // where compare() composites a screen
   int width_ = 0, height_ = 0;
+  Mode mode_ = Mode::mirror;
+  // What replay() did over the current stats window, reported every 2s.
+  struct Stats {
+    std::uint64_t replays = 0, ops = 0, draws = 0, regroups = 0, pixel_ops = 0, pixel_bytes = 0, uploads = 0;
+    std::uint64_t replay_us = 0, max_replay_us = 0;
+    std::uint64_t capture_px[ER_CANVAS_OP_COUNT] = {}, captures[ER_CANVAS_OP_COUNT] = {};
+    std::int64_t window_start_us = 0;
+  } stats_;
   unsigned int vao_ = 0, shape_ = 0, image_ = 0;
   unsigned int pixels_ = 0;  // the texture captured ops' pixels are drawn from
   std::vector<Op>* ops_ = nullptr;
@@ -69,10 +85,16 @@ private:
   std::unordered_map<const void*, Image> images_;
 
   static int record(const ERCanvasOp* op, void* self);
+  // The answer to an op it keeps.
+  int kept() const { return mode_ == Mode::draw ? ER_CANVAS_TAKEN : ER_CANVAS_PASS; }
   static bool captures(int kind);
   bool takes(int kind) const;
   Group& group(const void* buffer, int w, int h);
   const Glyph& glyph(const void* bitmap, int w, int h, int bpp);
   const Image& image(const void* pixels, const char* name, int w, int h, int format);
   void draw_ops();
+  struct Uniform { unsigned int program; const char* name; int location; };
+  std::vector<Uniform> uniforms_;
+  int uniform(unsigned int program, const char* name);
+  bool screen_target();
 };

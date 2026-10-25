@@ -1,7 +1,7 @@
 // Copyright (C) 2026 half144 and PS5 React contributors
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Additional attribution term: see LICENSE-ATTRIBUTION.
-#include "gpu_mirror.hpp"
+#include "gpu_renderer.hpp"
 
 #include "gl_presenter.hpp"
 
@@ -21,13 +21,14 @@ extern "C" {
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <mutex>
 #include <string>
 
-struct GpuMirror::Op {
+struct GpuRenderer::Op {
   ERCanvasOp op;
   std::vector<std::uint32_t> pixels;  // ER_CANVAS_PIXELS: a copy, the engine's buffer is the call's only
 };
@@ -69,7 +70,8 @@ void main() {
 }
 )";
 
-// Rounded rects: mode 0 fills, 1 fills inside a border, 2 strokes the border only.
+// Rounded rects: mode 0 fills, 1 fills inside a border, 2 strokes the border only. Mode 5 is the
+// animated focus ring (border_sweep.c): a ring inside the rect, bright at its head and fading behind it.
 constexpr const char* kShapeFragment = R"(
 uniform vec2 u_origin;
 uniform vec4 u_rect;
@@ -90,7 +92,48 @@ uniform float u_min_p;
 uniform float u_to_idx;
 uniform int u_step;
 uniform int u_lut_n;
+// The sweep: the ring (outer radius, width, inner radius), its centre line (straight half-lengths a, b and
+// corner radius), and the head's place on the perimeter and the tail's length, as fractions of it.
+uniform vec3 u_ring;
+uniform vec3 u_line;
+uniform vec2 u_sweep;
 out vec4 frag;
+const float kPi = 3.14159265;
+float sd_rrect(vec2 p, vec2 half_size, float r) {
+  vec2 q = abs(p) - (half_size - r);
+  return length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - r;
+}
+float perimeter_at(vec2 p, float a, float b, float r) {
+  float quarter = r * kPi * 0.5;
+  float total = 4.0 * a + 4.0 * b + 4.0 * quarter;
+  if (total <= 0.0) return 0.0;
+  float s;
+  if (abs(p.x) <= a && p.y < 0.0) s = p.x + a;
+  else if (p.x > a && p.y < -b) s = 2.0 * a + r * (atan(p.y + b, p.x - a) + kPi * 0.5);
+  else if (p.x > 0.0 && abs(p.y) <= b) s = 2.0 * a + quarter + (p.y + b);
+  else if (p.x > a && p.y > b) s = 2.0 * a + 2.0 * b + quarter + r * atan(p.y - b, p.x - a);
+  else if (abs(p.x) <= a && p.y > 0.0) s = 2.0 * a + 2.0 * b + 2.0 * quarter + (a - p.x);
+  else if (p.x < -a && p.y > b) s = 4.0 * a + 2.0 * b + 2.0 * quarter + r * (atan(p.y - b, p.x + a) - kPi * 0.5);
+  else if (p.x < 0.0 && abs(p.y) <= b) s = 4.0 * a + 2.0 * b + 3.0 * quarter + (b - p.y);
+  else s = 4.0 * a + 4.0 * b + 3.0 * quarter + r * (atan(p.y + b, p.x + a) + kPi);
+  return s / total;
+}
+float sweep_alpha(float t) {
+  const float lead = 0.01;
+  float d = u_sweep.x - t;
+  d -= floor(d);
+  if (d > 1.0 - lead) return (d - (1.0 - lead)) / lead;
+  if (d >= u_sweep.y) return 0.0;
+  float f = 1.0 - d / u_sweep.y;
+  return f * f;
+}
+vec4 sweep(vec2 c) {
+  vec2 half_size = u_rect.zw * 0.5;
+  vec2 p = c - (u_rect.xy + half_size);
+  float cov = clamp(0.5 - sd_rrect(p, half_size, u_ring.x), 0.0, 1.0);
+  cov *= clamp(0.5 + sd_rrect(p, half_size - u_ring.y, u_ring.z), 0.0, 1.0);
+  return u_fill * (cov * sweep_alpha(perimeter_at(p, u_line.x, u_line.y, u_line.z)));
+}
 const int kBayer[16] = int[16](0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5);
 vec4 premul_f(vec4 s) { return vec4(s.x, s.y * s.x / 255.0, s.z * s.x / 255.0, s.w * s.x / 255.0); }
 vec4 lut(int idx) {
@@ -143,6 +186,8 @@ void main() {
   vec4 color;
   if (u_mode == 0) {
     color = u_fill * outer;
+  } else if (u_mode == 5) {
+    color = sweep(c);
   } else if (u_mode >= 3) {
     color = gradient(c) * outer;
   } else {
@@ -306,10 +351,10 @@ constexpr const char* kKindNames[ER_CANVAS_OP_COUNT] = {
     "clip-rect", "clip-rrect", "clip-reset", "clip-pop", "alpha", "blend", "group-begin", "group-end",
     "group-draw", "group-xform", "group-keep", "unhooked", "move", "glyph", "image-region", "pixels"};
 
-void write_bmp(const std::string& path, const std::vector<std::uint32_t>& argb, int width, int height) {
+bool write_bmp(const std::string& path, const std::vector<std::uint32_t>& argb, int width, int height) {
   const int w = width / 2, h = height / 2, row = (w * 3 + 3) & ~3;
   FILE* file = std::fopen(path.c_str(), "wb");
-  if (!file) return;
+  if (!file) return false;
   const std::uint32_t data = static_cast<std::uint32_t>(row) * static_cast<std::uint32_t>(h);
   std::uint8_t header[54] = {'B', 'M'};
   auto put32 = [&](int at, std::uint32_t v) { std::memcpy(header + at, &v, 4); };
@@ -332,14 +377,15 @@ void write_bmp(const std::string& path, const std::vector<std::uint32_t>& argb, 
     }
     std::fwrite(line.data(), 1, line.size(), file);
   }
-  std::fclose(file);
+  return std::fclose(file) == 0;
 }
 
 }  // namespace
 
-GpuMirror::~GpuMirror() { stop(); }
+GpuRenderer::~GpuRenderer() { stop(); }
 
-bool GpuMirror::start(int width, int height) {
+bool GpuRenderer::start(int width, int height, Mode mode) {
+  mode_ = mode;
   width_ = width;
   height_ = height;
   shape_ = link(kShapeFragment);
@@ -354,11 +400,11 @@ bool GpuMirror::start(int width, int height) {
   ops_ = new std::vector<Op>();
   ops_->reserve(65536);
   missing_.assign(ER_CANVAS_OP_COUNT, 0);
-  er_set_canvas(&GpuMirror::record, this);
+  er_set_canvas(&GpuRenderer::record, this);
   return true;
 }
 
-void GpuMirror::stop() {
+void GpuRenderer::stop() {
   if (!ops_) return;
   er_set_canvas(nullptr, nullptr);
   free_target(target_.texture, target_.fbo);
@@ -373,6 +419,7 @@ void GpuMirror::stop() {
   if (pixels_) glDeleteTextures(1, &pixels_);
   pixels_ = 0;
   if (vao_) glDeleteVertexArrays(1, &vao_);
+  uniforms_.clear();
   if (shape_) glDeleteProgram(shape_);
   if (image_) glDeleteProgram(image_);
   vao_ = shape_ = image_ = 0;
@@ -380,7 +427,7 @@ void GpuMirror::stop() {
   ops_ = nullptr;
 }
 
-bool GpuMirror::takes(int kind) const {
+bool GpuRenderer::takes(int kind) const {
   switch (kind) {
     case ER_CANVAS_FILL:
     case ER_CANVAS_RRECT:
@@ -403,6 +450,7 @@ bool GpuMirror::takes(int kind) const {
     case ER_CANVAS_GLYPH:
     case ER_CANVAS_GRADIENT:
     case ER_CANVAS_IMAGE_REGION:
+    case ER_CANVAS_BORDER_SWEEP:
       return true;
     default:
       return false;
@@ -410,10 +458,9 @@ bool GpuMirror::takes(int kind) const {
 }
 
 // What the mirror has no shader for yet: the engine draws it into a buffer, and the mirror draws the pixels.
-bool GpuMirror::captures(int kind) {
+bool GpuRenderer::captures(int kind) {
   switch (kind) {
     case ER_CANVAS_SHADOW:
-    case ER_CANVAS_BORDER_SWEEP:
     case ER_CANVAS_BORDER_CONIC:
     case ER_CANVAS_BORDER_RADIAL:
     case ER_CANVAS_ARC_SECTOR:
@@ -425,10 +472,10 @@ bool GpuMirror::captures(int kind) {
   }
 }
 
-// Called by the engine for every op. The mirror never takes one (the software rasterizer must still draw
-// it): it keeps the ops a GPU renderer would be handed, and counts the ones it could not draw.
-int GpuMirror::record(const ERCanvasOp* op, void* self_raw) {
-  auto* self = static_cast<GpuMirror*>(self_raw);
+// Called by the engine for every op: keeps the ops a GPU renderer would be handed, and counts the ones it
+// could not draw. A mirror takes none of them (the software rasterizer must still draw them).
+int GpuRenderer::record(const ERCanvasOp* op, void* self_raw) {
+  auto* self = static_cast<GpuRenderer*>(self_raw);
   std::lock_guard<std::mutex> guard(record_lock);
   // What a GPU renderer is handed: the ops at depth 0, and the glyphs of a text block it leaves to the
   // engine to lay out.
@@ -437,7 +484,11 @@ int GpuMirror::record(const ERCanvasOp* op, void* self_raw) {
     return ER_CANVAS_PASS;
   // Text and images are left to the engine to lay out; their glyphs and regions come next.
   if (op->kind == ER_CANVAS_TEXT || op->kind == ER_CANVAS_IMAGE) return ER_CANVAS_PASS;
-  if (captures(op->kind) && op->bounds[2] > 0) return ER_CANVAS_CAPTURE;
+  if (captures(op->kind) && op->bounds[2] > 0) {
+    self->stats_.captures[op->kind]++;
+    self->stats_.capture_px[op->kind] += static_cast<std::uint64_t>(op->bounds[2]) * op->bounds[3];
+    return ER_CANVAS_CAPTURE;
+  }
   if (op->kind == ER_CANVAS_PIXELS) {
     const auto* px = static_cast<const std::uint32_t*>(op->buffer);
     Op kept{*op, {}};
@@ -447,7 +498,7 @@ int GpuMirror::record(const ERCanvasOp* op, void* self_raw) {
                          px + static_cast<std::size_t>(y) * op->width + op->w);
     kept.op.buffer = nullptr;
     self->ops_->push_back(std::move(kept));
-    return ER_CANVAS_PASS;
+    return self->kept();
   }
   // A 3D transform carries a homography; only the 2D map is drawn so far.
   if (!self->takes(op->kind) || (op->kind == ER_CANVAS_GROUP_XFORM && op->f[0] == 3.0f)) {
@@ -455,13 +506,23 @@ int GpuMirror::record(const ERCanvasOp* op, void* self_raw) {
     return ER_CANVAS_PASS;
   }
   self->ops_->push_back(Op{*op, {}});
-  return ER_CANVAS_PASS;
+  return self->kept();
 }
 
-GpuMirror::Group& GpuMirror::group(const void* buffer, int w, int h) {
+// A uniform's location, looked up once per program and name (the names are literals).
+int GpuRenderer::uniform(unsigned int program, const char* name) {
+  for (const Uniform& u : uniforms_)
+    if (u.program == program && u.name == name) return u.location;
+  const int location = glGetUniformLocation(program, name);
+  uniforms_.push_back({program, name, location});
+  return location;
+}
+
+GpuRenderer::Group& GpuRenderer::group(const void* buffer, int w, int h) {
   for (auto& [key, group] : groups_) {
     if (key != buffer) continue;
     if (group.target.width != w || group.target.height != h) {
+      stats_.regroups++;
       free_target(group.target.texture, group.target.fbo);
       make_target(w, h, group.target.texture, group.target.fbo);
       group.target.width = w;
@@ -478,7 +539,7 @@ GpuMirror::Group& GpuMirror::group(const void* buffer, int w, int h) {
 }
 
 // A baked glyph's coverage as an 8-bit texture, unpacked once from its 1, 2, 4 or 8 bits per pixel.
-const GpuMirror::Glyph& GpuMirror::glyph(const void* bitmap, int w, int h, int bpp) {
+const GpuRenderer::Glyph& GpuRenderer::glyph(const void* bitmap, int w, int h, int bpp) {
   auto found = glyphs_.find(bitmap);
   if (found != glyphs_.end()) return found->second;
   const auto* bits = static_cast<const std::uint8_t*>(bitmap);
@@ -499,6 +560,7 @@ const GpuMirror::Glyph& GpuMirror::glyph(const void* bitmap, int w, int h, int b
   glGenTextures(1, &g.texture);
   glBindTexture(GL_TEXTURE_2D, g.texture);
   glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+  stats_.uploads++;
   glTexImage2D(GL_TEXTURE_2D, 0, GL_R8, w, h, 0, GL_RED, GL_UNSIGNED_BYTE, coverage.data());
   glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
@@ -507,7 +569,7 @@ const GpuMirror::Glyph& GpuMirror::glyph(const void* bitmap, int w, int h, int b
 }
 
 // An image's pixels as a texture, uploaded once per buffer (premultiplied ARGB8888, or RGB565).
-const GpuMirror::Image& GpuMirror::image(const void* pixels, const char* name, int w, int h, int format) {
+const GpuRenderer::Image& GpuRenderer::image(const void* pixels, const char* name, int w, int h, int format) {
   auto found = images_.find(pixels);
   if (found != images_.end()) {
     Image& kept = found->second;
@@ -516,6 +578,7 @@ const GpuMirror::Image& GpuMirror::image(const void* pixels, const char* name, i
     glDeleteTextures(1, &kept.texture);
     images_.erase(found);
   }
+  stats_.uploads++;
   Image img{0, w, h, format, name ? name : ""};
   glGenTextures(1, &img.texture);
   glBindTexture(GL_TEXTURE_2D, img.texture);
@@ -532,11 +595,35 @@ const GpuMirror::Image& GpuMirror::image(const void* pixels, const char* name, i
   return images_.emplace(pixels, img).first->second;
 }
 
-void GpuMirror::replay() {
+void GpuRenderer::replay() {
   if (!active()) return;
   std::lock_guard<std::mutex> guard(record_lock);
+  const auto began = std::chrono::steady_clock::now();
+  stats_.ops += ops_->size();
   if (!ops_->empty()) draw_ops();
   ops_->clear();
+  const auto now = std::chrono::steady_clock::now();
+  const auto took = static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(now - began).count());
+  stats_.replays++;
+  stats_.replay_us += took;
+  stats_.max_replay_us = std::max(stats_.max_replay_us, took);
+  const std::int64_t now_us = std::chrono::duration_cast<std::chrono::microseconds>(now.time_since_epoch()).count();
+  if (!stats_.window_start_us) stats_.window_start_us = now_us;
+  if (now_us - stats_.window_start_us >= 2000000) {
+    const double n = static_cast<double>(stats_.replays);
+    std::printf("[PS5-REACT] gpu: replays=%llu avg=%.2fms max=%.2fms | per replay: ops=%.0f draws=%.0f regroups=%.1f "
+                "pixels=%.1f (%.0fKB) uploads=%.1f\n",
+                static_cast<unsigned long long>(stats_.replays), stats_.replay_us / n / 1000.0,
+                stats_.max_replay_us / 1000.0, stats_.ops / n, stats_.draws / n, stats_.regroups / n,
+                stats_.pixel_ops / n, stats_.pixel_bytes / n / 1024.0, stats_.uploads / n);
+    for (int kind = 0; kind < ER_CANVAS_OP_COUNT; kind++)
+      if (stats_.captures[kind])
+        std::printf("[PS5-REACT] gpu:   capture %s: %.1f per replay, %.0f kpx each (bounds, before clipping)\n",
+                    kKindNames[kind], stats_.captures[kind] / n,
+                    stats_.capture_px[kind] / 1000.0 / static_cast<double>(stats_.captures[kind]));
+    stats_ = {};
+    stats_.window_start_us = now_us;
+  }
   glBindFramebuffer(GL_FRAMEBUFFER, 0);
   glDisable(GL_SCISSOR_TEST);
   glDisable(GL_BLEND);
@@ -545,7 +632,7 @@ void GpuMirror::replay() {
   glBindVertexArray(0);
 }
 
-void GpuMirror::draw_ops() {
+void GpuRenderer::draw_ops() {
   struct Bound { const Target* target; int ox, oy; };
   std::vector<Bound> targets{{&target_, 0, 0}};
   std::vector<Clip> clips;
@@ -582,19 +669,19 @@ void GpuMirror::draw_ops() {
       std::copy(it->radii, it->radii + 4, radii + count * 4);
       count++;
     }
-    glUniform1i(glGetUniformLocation(program, "u_clips"), count);
-    glUniform4fv(glGetUniformLocation(program, "u_clip_rect"), 4, rects);
-    glUniform4fv(glGetUniformLocation(program, "u_clip_radii"), 4, radii);
+    glUniform1i(uniform(program, "u_clips"), count);
+    glUniform4fv(uniform(program, "u_clip_rect"), 4, rects);
+    glUniform4fv(uniform(program, "u_clip_radii"), 4, radii);
   };
   auto begin_draw = [&](GLuint program, int x, int y, int w, int h) {
     const Bound& b = targets.back();
     glUseProgram(program);
-    glUniform2f(glGetUniformLocation(program, "u_size"), static_cast<float>(b.target->width),
+    glUniform2f(uniform(program, "u_size"), static_cast<float>(b.target->width),
                 static_cast<float>(b.target->height));
-    glUniform2f(glGetUniformLocation(program, "u_origin"), static_cast<float>(b.ox), static_cast<float>(b.oy));
-    glUniform4f(glGetUniformLocation(program, "u_quad"), static_cast<float>(x), static_cast<float>(y),
+    glUniform2f(uniform(program, "u_origin"), static_cast<float>(b.ox), static_cast<float>(b.oy));
+    glUniform4f(uniform(program, "u_quad"), static_cast<float>(x), static_cast<float>(y),
                 static_cast<float>(w), static_cast<float>(h));
-    glUniform1f(glGetUniformLocation(program, "u_alpha"), alpha);
+    glUniform1f(uniform(program, "u_alpha"), alpha);
     apply_clip(program);
     if (blend == ER_BLEND_ADD) glBlendFunc(GL_ONE, GL_ONE);
     else glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
@@ -611,11 +698,11 @@ void GpuMirror::draw_ops() {
     float radii[4];
     clamp_radii(op.radii, op.w, op.h, radii);
     const auto f = premultiplied(fill);
-    glUniform4f(glGetUniformLocation(shape_, "u_rect"), static_cast<float>(op.x), static_cast<float>(op.y),
+    glUniform4f(uniform(shape_, "u_rect"), static_cast<float>(op.x), static_cast<float>(op.y),
                 static_cast<float>(op.w), static_cast<float>(op.h));
-    glUniform4fv(glGetUniformLocation(shape_, "u_radii"), 1, radii);
-    glUniform1i(glGetUniformLocation(shape_, "u_mode"), mode);
-    glUniform4fv(glGetUniformLocation(shape_, "u_fill"), 1, f.data());
+    glUniform4fv(uniform(shape_, "u_radii"), 1, radii);
+    glUniform1i(uniform(shape_, "u_mode"), mode);
+    glUniform4fv(uniform(shape_, "u_fill"), 1, f.data());
     if (mode != 0) {
       const float e[4] = {static_cast<float>(edges[0]), static_cast<float>(edges[1]), static_cast<float>(edges[2]),
                           static_cast<float>(edges[3])};
@@ -628,24 +715,26 @@ void GpuMirror::draw_ops() {
         const auto p = premultiplied(colors[i]);
         std::copy(p.begin(), p.end(), c + i * 4);
       }
-      glUniform4fv(glGetUniformLocation(shape_, "u_edges"), 1, e);
-      glUniform4fv(glGetUniformLocation(shape_, "u_inner_radii"), 1, inner);
-      glUniform4fv(glGetUniformLocation(shape_, "u_edge_color"), 4, c);
+      glUniform4fv(uniform(shape_, "u_edges"), 1, e);
+      glUniform4fv(uniform(shape_, "u_inner_radii"), 1, inner);
+      glUniform4fv(uniform(shape_, "u_edge_color"), 4, c);
     }
+    stats_.draws++;
     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
   };
   auto texture_draw = [&](unsigned int texture, int kind, int x, int y, int w, int h, float shift_x, float shift_y,
                           int src_w, int src_h, const float* m, float op_alpha) {
     if (w <= 0 || h <= 0) return;
     begin_draw(image_, x, y, w, h);
-    glUniform1f(glGetUniformLocation(image_, "u_alpha"), alpha * op_alpha);
+    glUniform1f(uniform(image_, "u_alpha"), alpha * op_alpha);
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, texture);
-    glUniform1i(glGetUniformLocation(image_, "u_tex"), 0);
-    glUniform1i(glGetUniformLocation(image_, "u_kind"), kind);
-    glUniform2f(glGetUniformLocation(image_, "u_shift"), shift_x, shift_y);
-    glUniform2f(glGetUniformLocation(image_, "u_src_size"), static_cast<float>(src_w), static_cast<float>(src_h));
-    if (m) glUniform1fv(glGetUniformLocation(image_, "u_m"), 6, m);
+    glUniform1i(uniform(image_, "u_tex"), 0);
+    glUniform1i(uniform(image_, "u_kind"), kind);
+    glUniform2f(uniform(image_, "u_shift"), shift_x, shift_y);
+    glUniform2f(uniform(image_, "u_src_size"), static_cast<float>(src_w), static_cast<float>(src_h));
+    if (m) glUniform1fv(uniform(image_, "u_m"), 6, m);
+    stats_.draws++;
     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
   };
 
@@ -782,10 +871,10 @@ void GpuMirror::draw_ops() {
         begin_draw(shape_, op.x, op.y, op.w, op.h);
         float radii[4];
         clamp_radii(op.radii, op.w, op.h, radii);
-        glUniform4f(glGetUniformLocation(shape_, "u_rect"), static_cast<float>(op.x), static_cast<float>(op.y),
+        glUniform4f(uniform(shape_, "u_rect"), static_cast<float>(op.x), static_cast<float>(op.y),
                     static_cast<float>(op.w), static_cast<float>(op.h));
-        glUniform4fv(glGetUniformLocation(shape_, "u_radii"), 1, radii);
-        glUniform1i(glGetUniformLocation(shape_, "u_mode"), op.mode == ER_GRADIENT_LINEAR ? 3 : 4);
+        glUniform4fv(uniform(shape_, "u_radii"), 1, radii);
+        glUniform1i(uniform(shape_, "u_mode"), op.mode == ER_GRADIENT_LINEAR ? 3 : 4);
         const int count = std::min(op.stop_count, 4);
         float colors[16] = {}, positions[4] = {};
         for (int i = 0; i < count; i++) {
@@ -796,9 +885,9 @@ void GpuMirror::draw_ops() {
           colors[i * 4 + 3] = static_cast<float>(c & 0xFF);
           positions[i] = op.stops[i].position;
         }
-        glUniform4fv(glGetUniformLocation(shape_, "u_stop_color"), 4, colors);
-        glUniform1fv(glGetUniformLocation(shape_, "u_stop_pos"), 4, positions);
-        glUniform1i(glGetUniformLocation(shape_, "u_stop_count"), count);
+        glUniform4fv(uniform(shape_, "u_stop_color"), 4, colors);
+        glUniform1fv(uniform(shape_, "u_stop_pos"), 4, positions);
+        glUniform1i(uniform(shape_, "u_stop_count"), count);
         // The table's size and the index scale, as the software ramp works them out.
         float extent, to_idx, min_p = 0.0f;
         int step = 0;
@@ -814,11 +903,12 @@ void GpuMirror::draw_ops() {
         const int n = std::clamp(static_cast<int>(extent) + 1, 2, 1024);
         to_idx = extent > 1e-6f ? static_cast<float>(n - 1) / extent : 0.0f;
         if (op.mode == ER_GRADIENT_LINEAR) step = static_cast<int>(std::lrint(op.f[0] * to_idx * 65536.0f));
-        glUniform2f(glGetUniformLocation(shape_, "u_dir"), op.f[0], op.f[1]);
-        glUniform1f(glGetUniformLocation(shape_, "u_min_p"), min_p);
-        glUniform1f(glGetUniformLocation(shape_, "u_to_idx"), to_idx);
-        glUniform1i(glGetUniformLocation(shape_, "u_step"), step);
-        glUniform1i(glGetUniformLocation(shape_, "u_lut_n"), n);
+        glUniform2f(uniform(shape_, "u_dir"), op.f[0], op.f[1]);
+        glUniform1f(uniform(shape_, "u_min_p"), min_p);
+        glUniform1f(uniform(shape_, "u_to_idx"), to_idx);
+        glUniform1i(uniform(shape_, "u_step"), step);
+        glUniform1i(uniform(shape_, "u_lut_n"), n);
+        stats_.draws++;
         glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
         break;
       }
@@ -827,19 +917,20 @@ void GpuMirror::draw_ops() {
         begin_draw(image_, op.x, op.y, op.w, op.h);
         glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, img.texture);
-        glUniform1i(glGetUniformLocation(image_, "u_tex"), 0);
-        glUniform1i(glGetUniformLocation(image_, "u_kind"), 3);
-        glUniform4f(glGetUniformLocation(image_, "u_dst"), static_cast<float>(op.x), static_cast<float>(op.y),
+        glUniform1i(uniform(image_, "u_tex"), 0);
+        glUniform1i(uniform(image_, "u_kind"), 3);
+        glUniform4f(uniform(image_, "u_dst"), static_cast<float>(op.x), static_cast<float>(op.y),
                     static_cast<float>(op.w), static_cast<float>(op.h));
-        glUniform4f(glGetUniformLocation(image_, "u_src"), static_cast<float>(op.src[0]), static_cast<float>(op.src[1]),
+        glUniform4f(uniform(image_, "u_src"), static_cast<float>(op.src[0]), static_cast<float>(op.src[1]),
                     static_cast<float>(op.src[2]), static_cast<float>(op.src[3]));
-        glUniform4f(glGetUniformLocation(image_, "u_tint"), static_cast<float>((op.argb >> 16) & 0xFF),
+        glUniform4f(uniform(image_, "u_tint"), static_cast<float>((op.argb >> 16) & 0xFF),
                     static_cast<float>((op.argb >> 8) & 0xFF), static_cast<float>(op.argb & 0xFF), op.f[0]);
         float radii[4];
         clamp_radii(op.radii, op.area[2], op.area[3], radii);
-        glUniform4f(glGetUniformLocation(image_, "u_mask"), static_cast<float>(op.area[0]),
+        glUniform4f(uniform(image_, "u_mask"), static_cast<float>(op.area[0]),
                     static_cast<float>(op.area[1]), static_cast<float>(op.area[2]), static_cast<float>(op.area[3]));
-        glUniform4fv(glGetUniformLocation(image_, "u_mask_radii"), 1, radii);
+        glUniform4fv(uniform(image_, "u_mask_radii"), 1, radii);
+        stats_.draws++;
         glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
         break;
       }
@@ -854,13 +945,14 @@ void GpuMirror::draw_ops() {
         begin_draw(image_, x, y, x1 - x, y1 - y);
         glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, g.texture);
-        glUniform1i(glGetUniformLocation(image_, "u_tex"), 0);
-        glUniform1i(glGetUniformLocation(image_, "u_kind"), 2);
-        glUniform2f(glGetUniformLocation(image_, "u_shift"), static_cast<float>(op.x), static_cast<float>(op.y));
-        glUniform2f(glGetUniformLocation(image_, "u_src_size"), static_cast<float>(g.width), static_cast<float>(g.height));
-        glUniform1i(glGetUniformLocation(image_, "u_italic"), op.f[0] == 0.0f ? 0 : op.mode == 1 ? 1 : 2);
+        glUniform1i(uniform(image_, "u_tex"), 0);
+        glUniform1i(uniform(image_, "u_kind"), 2);
+        glUniform2f(uniform(image_, "u_shift"), static_cast<float>(op.x), static_cast<float>(op.y));
+        glUniform2f(uniform(image_, "u_src_size"), static_cast<float>(g.width), static_cast<float>(g.height));
+        glUniform1i(uniform(image_, "u_italic"), op.f[0] == 0.0f ? 0 : op.mode == 1 ? 1 : 2);
         const auto c = premultiplied(op.argb);
-        glUniform4fv(glGetUniformLocation(image_, "u_color"), 1, c.data());
+        glUniform4fv(uniform(image_, "u_color"), 1, c.data());
+        stats_.draws++;
         glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
         break;
       }
@@ -878,6 +970,26 @@ void GpuMirror::draw_ops() {
         bind();
         break;
       }
+      case ER_CANVAS_BORDER_SWEEP: {
+        // As border_sweep_render_sw sets up the ring and its centre line.
+        if (op.w <= 0 || op.h <= 0 || op.width <= 0 || (op.argb >> 24) == 0 || op.f[1] <= 0.0f) break;
+        const int r = std::clamp(op.radii[0], 0, std::min(op.w, op.h) / 2);
+        const float bw = static_cast<float>(op.width), mid = bw * 0.5f;
+        const float cr = std::max(static_cast<float>(r) - mid, 0.0f);
+        begin_draw(shape_, op.x, op.y, op.w, op.h);
+        const auto f = premultiplied(op.argb);
+        glUniform4f(uniform(shape_, "u_rect"), static_cast<float>(op.x), static_cast<float>(op.y),
+                    static_cast<float>(op.w), static_cast<float>(op.h));
+        glUniform1i(uniform(shape_, "u_mode"), 5);
+        glUniform4fv(uniform(shape_, "u_fill"), 1, f.data());
+        glUniform3f(uniform(shape_, "u_ring"), static_cast<float>(r), bw, std::max(static_cast<float>(r) - bw, 0.0f));
+        glUniform3f(uniform(shape_, "u_line"), static_cast<float>(op.w) * 0.5f - mid - cr,
+                    static_cast<float>(op.h) * 0.5f - mid - cr, cr);
+        glUniform2f(uniform(shape_, "u_sweep"), op.f[0], op.f[1]);
+        stats_.draws++;
+        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+        break;
+      }
       case ER_CANVAS_PIXELS: {
         if (op.w <= 0 || op.h <= 0) break;
         if (!pixels_) {
@@ -887,6 +999,8 @@ void GpuMirror::draw_ops() {
           glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
         }
         glBindTexture(GL_TEXTURE_2D, pixels_);
+        stats_.pixel_ops++;
+        stats_.pixel_bytes += static_cast<std::uint64_t>(op.w) * op.h * 4;
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, op.w, op.h, 0, GL_BGRA, GL_UNSIGNED_INT_8_8_8_8_REV,
                      recorded.pixels.data());
         texture_draw(pixels_, 0, op.x, op.y, op.w, op.h, static_cast<float>(op.x), static_cast<float>(op.y), op.w,
@@ -967,13 +1081,17 @@ void read_target(unsigned int fbo, int width, int height, bool flip, std::vector
 
 }  // namespace
 
-std::string GpuMirror::compare(const std::uint32_t* cpu, GlPresenter& presenter, const std::string& path) {
+bool GpuRenderer::screen_target() {
+  if (screen_.fbo) return true;
+  if (!make_target(width_, height_, screen_.texture, screen_.fbo)) return false;
+  screen_.width = width_;
+  screen_.height = height_;
+  return true;
+}
+
+std::string GpuRenderer::compare(const std::uint32_t* cpu, GlPresenter& presenter, const std::string& path) {
   if (!active() || !cpu) return "gpu mirror: nothing to compare";
-  if (!screen_.fbo) {
-    if (!make_target(width_, height_, screen_.texture, screen_.fbo)) return "gpu mirror: no screen target";
-    screen_.width = width_;
-    screen_.height = height_;
-  }
+  if (!screen_target()) return "gpu mirror: no screen target";
   // The engine's two pictures, then each as the screen shows it: over the presenter's layers.
   std::vector<std::uint32_t> gpu, cpu_screen, gpu_screen;
   read_target(target_.fbo, width_, height_, false, gpu);
@@ -1000,4 +1118,13 @@ std::string GpuMirror::compare(const std::uint32_t* cpu, GlPresenter& presenter,
     if (missing_[kind]) n += std::snprintf(line + n, sizeof line - n, " %s=%llu", kKindNames[kind],
                                            static_cast<unsigned long long>(missing_[kind]));
   return line;
+}
+
+bool GpuRenderer::save_screen(GlPresenter& presenter, const std::string& path) {
+  if (!active()) return false;
+  if (!screen_target()) return false;
+  std::vector<std::uint32_t> screen;
+  presenter.composite_to(screen_.fbo, target_.texture);
+  read_target(screen_.fbo, width_, height_, true, screen);
+  return write_bmp(path, screen, width_, height_);
 }

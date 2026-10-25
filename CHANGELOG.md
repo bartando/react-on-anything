@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased — the desktop preview can draw with the GPU
+
+- `PS5_REACT_GPU=1` draws the preview with OpenGL instead of the software rasterizer: the engine skips
+  what the GPU renderer takes, and the presenter shows its texture, uploading nothing. On an Anyfin
+  tour, frames that repaint most of the screen run at 82 fps on 0.4 CPU cores, against 74 to 113 fps
+  on 2.7 cores with eight render workers and 29 to 46 fps with one (an M-series Mac at 4K).
+
+- The animated focus ring (a border sweep) has a shader of its own, and a captured op hands over
+  only the box it drew in, so neither re-uploads most of the ring's or an icon's clip every frame.
+
 ## Unreleased — a GPU mirror in the desktop preview
 
 - `PS5_REACT_GPU_MIRROR=1` makes the desktop preview draw each commit a second time with OpenGL,

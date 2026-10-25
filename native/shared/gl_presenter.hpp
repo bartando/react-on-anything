@@ -40,6 +40,9 @@ public:
   // on the PS5 a present costs the render thread about 2 ms of CPU even when nothing changed.
   bool unchanged(std::span<const ERRect> damage, std::span<const DamageMove> moves, int surface_width,
                  int surface_height) const;
+  // Presents the texture `frame` (premultiplied, laid out like the framebuffer) in place of the software
+  // framebuffer, over the layers: for a renderer that draws on the GPU. Uploads nothing.
+  bool draw_texture(unsigned int frame, int surface_width, int surface_height);
   // Composites what the last present showed into `fbo` (width x height, rows bottom first like the
   // screen), with the texture `frame` in place of the software framebuffer when it is not 0: how another
   // renderer's picture of the same frame would look on screen, layers and all.

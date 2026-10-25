@@ -1,5 +1,5 @@
 diff --git a/engine/core/native_renderer.c b/engine/core/native_renderer.c
-index 55c9d99..76f8a9b 100644
+index 55c9d99..fb3003c 100644
 --- a/engine/core/native_renderer.c
 +++ b/engine/core/native_renderer.c
 @@ -22,8 +22,11 @@
@@ -14,7 +14,7 @@ index 55c9d99..76f8a9b 100644
  
  /*----------------------------------------------------------------------------------------------------------------------
   - Constants
-@@ -93,6 +96,22 @@ typedef struct
+@@ -93,6 +96,25 @@ typedef struct
      int band_oy;
      int band_h;
  
@@ -29,6 +29,9 @@ index 55c9d99..76f8a9b 100644
 +    size_t capture_cap;
 +    int capture_x, capture_y, capture_w, capture_h;
 +    int capture_depth;
++    /* What the captured op wrote: only that is handed over, and cleared again after (the buffer is kept
++     * zeroed, so a capture never clears more than it drew). Empty while x0 >= x1. */
++    int written_x0, written_y0, written_x1, written_y1;
 +    uint32_t* saved_scratch_buf;
 +    int saved_scratch_w, saved_scratch_h, saved_scratch_ox, saved_scratch_oy;
 +    int saved_mask_floor;
@@ -37,7 +40,7 @@ index 55c9d99..76f8a9b 100644
      /* Scratch redirect: when scratch_buf is non-NULL all blit calls write into it. */
      uint32_t* scratch_buf;
      int scratch_w;
-@@ -123,6 +142,9 @@ typedef struct
+@@ -123,6 +145,9 @@ typedef struct
   * (always called before the first render). */
  static NRCtx s_ctx[ERUI_RENDER_WORKERS];
  
@@ -47,7 +50,7 @@ index 55c9d99..76f8a9b 100644
  /** @brief The calling worker's blit-layer context (constant &s_ctx[0] in single-worker builds).
   *  With workers installed each call asks the host which worker it is, so functions fetch it once. */
  static inline NRCtx* rc(void)
-@@ -484,9 +506,172 @@ const EmbeddedRenderBackend* er_backend(void)
+@@ -484,9 +509,181 @@ const EmbeddedRenderBackend* er_backend(void)
      return g_backend;
  }
  
@@ -82,13 +85,14 @@ index 55c9d99..76f8a9b 100644
 +    const size_t need = (size_t)w * (size_t)h;
 +    if (need > ctx->capture_cap)
 +    {
-+        uint32_t* grown = (uint32_t*)realloc(ctx->capture_buf, need * sizeof(uint32_t));
++        uint32_t* grown = (uint32_t*)calloc(need, sizeof(uint32_t));
 +        if (!grown)
 +            return false;
++        free(ctx->capture_buf);
 +        ctx->capture_buf = grown;
 +        ctx->capture_cap = need;
 +    }
-+    memset(ctx->capture_buf, 0, need * sizeof(uint32_t));
++    ctx->written_x0 = ctx->written_x1 = 0;
 +    ctx->capture_x = x;
 +    ctx->capture_y = y;
 +    ctx->capture_w = w;
@@ -127,20 +131,28 @@ index 55c9d99..76f8a9b 100644
 +    ctx->blend_mode = ctx->saved_blend;
 +    const int depth = ctx->capture_depth;
 +    ctx->capture_depth = -1;
++    if (ctx->written_x0 >= ctx->written_x1)
++        return;
++    const int stride = ctx->capture_w;
++    uint32_t* const first =
++        ctx->capture_buf + (size_t)(ctx->written_y0 - ctx->capture_y) * (size_t)stride + (ctx->written_x0 - ctx->capture_x);
 +    ERCanvasOp op = {0};
 +    op.kind = ER_CANVAS_PIXELS;
 +    op.depth = (uint8_t)depth;
-+    op.buffer = ctx->capture_buf;
-+    op.width = ctx->capture_w;
-+    op.x = ctx->capture_x;
-+    op.y = ctx->capture_y;
-+    op.w = ctx->capture_w;
-+    op.h = ctx->capture_h;
-+    if (g_er_canvas(&op, s_canvas_ctx) == ER_CANVAS_TAKEN)
-+        return;
-+    ctx->canvas_depth++;
-+    er_blit_blend(ctx->capture_buf, ctx->capture_w * (int)sizeof(uint32_t), 255U, op.x, op.y, op.w, op.h);
-+    ctx->canvas_depth--;
++    op.buffer = first;
++    op.width = stride;
++    op.x = ctx->written_x0;
++    op.y = ctx->written_y0;
++    op.w = ctx->written_x1 - ctx->written_x0;
++    op.h = ctx->written_y1 - ctx->written_y0;
++    if (g_er_canvas(&op, s_canvas_ctx) != ER_CANVAS_TAKEN)
++    {
++        ctx->canvas_depth++;
++        er_blit_blend(first, stride * (int)sizeof(uint32_t), 255U, op.x, op.y, op.w, op.h);
++        ctx->canvas_depth--;
++    }
++    for (int row = 0; row < op.h; row++)
++        memset(first + (size_t)row * (size_t)stride, 0, (size_t)op.w * sizeof(uint32_t));
 +}
 +
 +bool er_canvas_offer(ERCanvasOp* op)
@@ -220,7 +232,7 @@ index 55c9d99..76f8a9b 100644
      ctx->scratch_buf = buf;
      ctx->scratch_w = w;
      ctx->scratch_h = h;
-@@ -496,7 +681,17 @@ void er_scratch_begin(uint32_t* buf, int w, int h, int ox, int oy)
+@@ -496,7 +693,17 @@ void er_scratch_begin(uint32_t* buf, int w, int h, int ox, int oy)
  
  void er_scratch_end(void)
  {
@@ -239,7 +251,7 @@ index 55c9d99..76f8a9b 100644
  }
  
  /*----------------------------------------------------------------------------------------------------------------------
-@@ -506,6 +701,16 @@ void er_scratch_end(void)
+@@ -506,6 +713,16 @@ void er_scratch_end(void)
  void er_push_clip_rect(int x, int y, int w, int h)
  {
      NRCtx* const ctx = rc();
@@ -256,7 +268,7 @@ index 55c9d99..76f8a9b 100644
      if (ctx->clip_depth >= ER_CLIP_STACK_DEPTH)
          return;
  
-@@ -538,6 +743,12 @@ void er_push_clip_rect(int x, int y, int w, int h)
+@@ -538,6 +755,12 @@ void er_push_clip_rect(int x, int y, int w, int h)
  void er_pop_clip_rect(void)
  {
      NRCtx* const ctx = rc();
@@ -269,7 +281,7 @@ index 55c9d99..76f8a9b 100644
      if (ctx->clip_depth > 0)
      {
          ctx->clip_depth--;
-@@ -551,7 +762,25 @@ void er_push_clip_rrect(int x, int y, int w, int h, int r_tl, int r_tr, int r_br
+@@ -551,7 +774,25 @@ void er_push_clip_rrect(int x, int y, int w, int h, int r_tl, int r_tr, int r_br
      NRCtx* const ctx = rc();
      if (ctx->clip_depth >= ER_CLIP_STACK_DEPTH)
          return;
@@ -296,7 +308,7 @@ index 55c9d99..76f8a9b 100644
      er_rrect_clamp_radii(w, h, &r_tl, &r_tr, &r_br, &r_bl);
      if ((r_tl | r_tr | r_br | r_bl) == 0)
          return; /* square corners: the rect alone is the clip */
-@@ -583,7 +812,15 @@ void er_mask_resume(int floor)
+@@ -583,7 +824,15 @@ void er_mask_resume(int floor)
  
  void er_set_blend_mode(uint8_t mode)
  {
@@ -313,7 +325,7 @@ index 55c9d99..76f8a9b 100644
  }
  
  uint8_t er_get_blend_mode(void)
-@@ -596,6 +833,12 @@ void er_push_clip_reset(void)
+@@ -596,6 +845,12 @@ void er_push_clip_reset(void)
      NRCtx* const ctx = rc();
      if (ctx->clip_depth >= ER_CLIP_STACK_DEPTH)
          return;
@@ -326,7 +338,7 @@ index 55c9d99..76f8a9b 100644
      /* Full-extent entry pushed WITHOUT intersecting the current top: used by offscreen source
       * captures (transform subtree render) that must see the whole subtree regardless of outer
       * scissors — the captured OUTPUT is clipped by the restored stack when it is blended out. */
-@@ -639,7 +882,15 @@ bool er_get_clip_rect(int* x, int* y, int* w, int* h)
+@@ -639,7 +894,15 @@ bool er_get_clip_rect(int* x, int* y, int* w, int* h)
  
  void er_set_draw_alpha(uint8_t alpha)
  {
@@ -343,7 +355,64 @@ index 55c9d99..76f8a9b 100644
  }
  
  uint8_t er_get_draw_alpha(void)
-@@ -885,9 +1136,34 @@ static void fill_through_blend(NRCtx* ctx, uint32_t argb, int x, int y, int w, i
+@@ -671,10 +934,40 @@ static inline bool band_clamp(const NRCtx* ctx, const uint8_t** src, int stride,
+     return *h > 0;
+ }
+ 
++/* Grows the captured op's written box by a blit into the capture buffer (screen space). */
++static void capture_touch(NRCtx* ctx, int x, int y, int w, int h)
++{
++    if (ctx->capture_depth < 0 || ctx->scratch_buf != ctx->capture_buf || w <= 0 || h <= 0)
++        return;
++    const int x0 = x > ctx->capture_x ? x : ctx->capture_x;
++    const int y0 = y > ctx->capture_y ? y : ctx->capture_y;
++    const int x1 = x + w < ctx->capture_x + ctx->capture_w ? x + w : ctx->capture_x + ctx->capture_w;
++    const int y1 = y + h < ctx->capture_y + ctx->capture_h ? y + h : ctx->capture_y + ctx->capture_h;
++    if (x0 >= x1 || y0 >= y1)
++        return;
++    if (ctx->written_x0 >= ctx->written_x1)
++    {
++        ctx->written_x0 = x0;
++        ctx->written_y0 = y0;
++        ctx->written_x1 = x1;
++        ctx->written_y1 = y1;
++        return;
++    }
++    if (x0 < ctx->written_x0)
++        ctx->written_x0 = x0;
++    if (y0 < ctx->written_y0)
++        ctx->written_y0 = y0;
++    if (x1 > ctx->written_x1)
++        ctx->written_x1 = x1;
++    if (y1 > ctx->written_y1)
++        ctx->written_y1 = y1;
++}
++
+ static void emit_fill(NRCtx* ctx, uint32_t argb, int x, int y, int w, int h)
+ {
+     if (ctx->scratch_buf)
+     {
++        capture_touch(ctx, x, y, w, h);
+         scratch_do_fill(argb, x - ctx->scratch_ox, y - ctx->scratch_oy, w, h);
+         return;
+     }
+@@ -692,6 +985,7 @@ static void emit_copy(NRCtx* ctx, const uint8_t* src, int stride, int x, int y,
+ {
+     if (ctx->scratch_buf)
+     {
++        capture_touch(ctx, x, y, w, h);
+         scratch_do_copy(src, stride, x - ctx->scratch_ox, y - ctx->scratch_oy, w, h);
+         return;
+     }
+@@ -711,6 +1005,7 @@ static void emit_blend(NRCtx* ctx, const uint8_t* src, int stride, uint8_t alpha
+     const bool add = ctx->blend_mode == ER_BLEND_ADD;
+     if (ctx->scratch_buf)
+     {
++        capture_touch(ctx, x, y, w, h);
+         if (add)
+             scratch_do_add(src, stride, alpha, x - ctx->scratch_ox, y - ctx->scratch_oy, w, h);
+         else
+@@ -885,9 +1180,34 @@ static void fill_through_blend(NRCtx* ctx, uint32_t argb, int x, int y, int w, i
          }
  }
  
@@ -378,7 +447,7 @@ index 55c9d99..76f8a9b 100644
      if (ctx->draw_alpha < 255U || ctx->blend_mode != ER_BLEND_NORMAL)
      {
          /* Inherited alpha or a blend mode: the color goes through the blend path (er_blit_blend applies
-@@ -902,9 +1178,27 @@ void er_blit_fill(uint32_t argb, int x, int y, int w, int h)
+@@ -902,9 +1222,27 @@ void er_blit_fill(uint32_t argb, int x, int y, int w, int h)
          emit_fill(ctx, argb, x, y, w, h);
  }
  
@@ -406,7 +475,7 @@ index 55c9d99..76f8a9b 100644
      if (ctx->draw_alpha < 255U || ctx->blend_mode != ER_BLEND_NORMAL)
      {
          /* An opaque copy becomes a blend at the inherited alpha and mode (er_blit_blend applies both). */
-@@ -922,9 +1216,27 @@ void er_blit_copy(const void* src, int stride, int x, int y, int w, int h)
+@@ -922,9 +1260,27 @@ void er_blit_copy(const void* src, int stride, int x, int y, int w, int h)
          emit_copy(ctx, s, stride, x, y, w, h);
  }
  
@@ -434,7 +503,7 @@ index 55c9d99..76f8a9b 100644
      /* The format-aware hook applies only when the backend can take the buffer as-is: no inherited
       * draw alpha to composite, no scratch capture in flight (scratch buffers are ARGB8888), no blend mode
       * and no rounded clip (the hook replaces whole rects). */
-@@ -953,9 +1265,27 @@ bool er_blit_copy_fmt(const void* src, int stride, ERImageFormat fmt, int x, int
+@@ -953,9 +1309,27 @@ bool er_blit_copy_fmt(const void* src, int stride, ERImageFormat fmt, int x, int
      return true;
  }
  
@@ -462,7 +531,7 @@ index 55c9d99..76f8a9b 100644
      if (ctx->draw_alpha < 255U)
      {
          alpha = (uint8_t)((uint32_t)alpha * ctx->draw_alpha / 255U);
-@@ -975,6 +1305,18 @@ void er_blit_blend(const void* src, int stride, uint8_t alpha, int x, int y, int
+@@ -975,6 +1349,18 @@ void er_blit_blend(const void* src, int stride, uint8_t alpha, int x, int y, int
  void er_blit_clear(int x, int y, int w, int h)
  {
      NRCtx* const ctx = rc();
@@ -481,7 +550,7 @@ index 55c9d99..76f8a9b 100644
      if (!apply_clip(ctx, &x, &y, &w, &h))
          return;
      if (ctx->scratch_buf)
-@@ -1008,6 +1350,18 @@ bool er_blit_can_move(void)
+@@ -1008,6 +1394,18 @@ bool er_blit_can_move(void)
  
  void er_blit_move(int sx, int sy, int w, int h, int dx, int dy)
  {
@@ -532,7 +601,7 @@ index 0374130..2b876a1 100644
   *
 diff --git a/engine/include/er_canvas.h b/engine/include/er_canvas.h
 new file mode 100644
-index 0000000..a24c31d
+index 0000000..88f71af
 --- /dev/null
 +++ b/engine/include/er_canvas.h
 @@ -0,0 +1,153 @@
@@ -632,7 +701,7 @@ index 0000000..a24c31d
 +                                     slot x width = their size, name), argb = tint (f[0] = 1 when tinted),
 +                                     area = the box a rounded image is cut to, radii[4] its corners. */
 +        /* Pixels */
-+        ER_CANVAS_PIXELS, /**< A captured op's pixels: buffer = premultiplied ARGB8888 rows of `width` pixels, rect. */
++        ER_CANVAS_PIXELS, /**< A captured op's pixels: buffer = premultiplied ARGB8888 rows of `width` pixels, rect = the box it drew in. */
 +        ER_CANVAS_OP_COUNT
 +    } ERCanvasOpKind;
 +
@@ -727,7 +796,7 @@ index ff04d7a..41050c3 100644
      if (!s)
          return;
 diff --git a/engine/rendering/border_sweep.c b/engine/rendering/border_sweep.c
-index 47de99a..d8221cc 100644
+index 47de99a..2114432 100644
 --- a/engine/rendering/border_sweep.c
 +++ b/engine/rendering/border_sweep.c
 @@ -236,7 +236,43 @@ static void ring_render(int x, int y, int w, int h, int radius, int width, RingS
@@ -737,13 +806,13 @@ index 47de99a..d8221cc 100644
 -void er_border_sweep_render(int x, int y, int w, int h, int radius, int width, uint32_t argb, float phase,
 +static void border_sweep_render_sw(int x, int y, int w, int h, int radius, int width, uint32_t argb, float phase, float length);
 +
++/* The ring is drawn inside its box. */
 +static void sweep_bounds(ERCanvasOp* op)
 +{
-+    const int reach = er_border_sweep_reach(op->radii[0], op->width);
-+    op->bounds[0] = op->x - reach;
-+    op->bounds[1] = op->y - reach;
-+    op->bounds[2] = op->w + 2 * reach;
-+    op->bounds[3] = op->h + 2 * reach;
++    op->bounds[0] = op->x;
++    op->bounds[1] = op->y;
++    op->bounds[2] = op->w;
++    op->bounds[3] = op->h;
 +}
 +
 +void er_border_sweep_render(int x, int y, int w, int h, int radius, int width, uint32_t argb, float phase, float length)
