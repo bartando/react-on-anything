@@ -7,6 +7,7 @@
 
 #include <cstdint>
 #include <string>
+#include <initializer_list>
 #include <unordered_map>
 #include <vector>
 
@@ -93,8 +94,14 @@ private:
   const Glyph& glyph(const void* bitmap, int w, int h, int bpp);
   const Image& image(const void* pixels, const char* name, int w, int h, int format);
   void draw_ops();
-  struct Uniform { unsigned int program; const char* name; int location; };
+  struct Uniform { int location; int bytes; std::uint8_t value[64]; };
   std::vector<Uniform> uniforms_;
-  int uniform(unsigned int program, const char* name);
+  std::unordered_map<std::uint64_t, std::size_t> uniform_index_; // program and name pointer → uniforms_
+  Uniform& uniform(unsigned int program, const char* name);
+  bool changes(Uniform& u, const void* data, int bytes);
+  void set_i(unsigned int program, const char* name, int value);
+  void set_f(unsigned int program, const char* name, std::initializer_list<float> values);
+  void set_v4(unsigned int program, const char* name, const float* values, int count);
+  void set_v1(unsigned int program, const char* name, const float* values, int count);
   bool screen_target();
 };

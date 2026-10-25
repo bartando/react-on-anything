@@ -413,6 +413,7 @@ void GpuRenderer::stop() {
   pixels_ = 0;
   if (vao_) glDeleteVertexArrays(1, &vao_);
   uniforms_.clear();
+  uniform_index_.clear();
   if (shape_) glDeleteProgram(shape_);
   if (image_) glDeleteProgram(image_);
   vao_ = shape_ = image_ = 0;
@@ -502,13 +503,50 @@ int GpuRenderer::record(const ERCanvasOp* op, void* self_raw) {
   return self->kept();
 }
 
-// A uniform's location, looked up once per program and name (the names are literals).
-int GpuRenderer::uniform(unsigned int program, const char* name) {
-  for (const Uniform& u : uniforms_)
-    if (u.program == program && u.name == name) return u.location;
-  const int location = glGetUniformLocation(program, name);
-  uniforms_.push_back({program, name, location});
-  return location;
+// A uniform's location and last value, looked up once per program and name (the names are literals).
+GpuRenderer::Uniform& GpuRenderer::uniform(unsigned int program, const char* name) {
+  const std::uint64_t key = (static_cast<std::uint64_t>(program) << 48) ^ reinterpret_cast<std::uintptr_t>(name);
+  auto found = uniform_index_.find(key);
+  if (found != uniform_index_.end()) return uniforms_[found->second];
+  uniform_index_.emplace(key, uniforms_.size());
+  uniforms_.push_back({glGetUniformLocation(program, name), -1, {}});
+  return uniforms_.back();
+}
+
+// Whether `data` differs from what the uniform holds, keeping it if so: a uniform keeps its value in
+// its program, and the driver charges for every call, changed or not.
+bool GpuRenderer::changes(Uniform& u, const void* data, int bytes) {
+  if (u.location < 0) return false;
+  if (u.bytes == bytes && !std::memcmp(u.value, data, static_cast<std::size_t>(bytes))) return false;
+  u.bytes = bytes;
+  std::memcpy(u.value, data, static_cast<std::size_t>(bytes));
+  return true;
+}
+
+void GpuRenderer::set_i(unsigned int program, const char* name, int value) {
+  Uniform& u = uniform(program, name);
+  if (changes(u, &value, sizeof value)) glUniform1i(u.location, value);
+}
+
+void GpuRenderer::set_f(unsigned int program, const char* name, std::initializer_list<float> values) {
+  Uniform& u = uniform(program, name);
+  if (!changes(u, values.begin(), static_cast<int>(values.size() * sizeof(float)))) return;
+  switch (values.size()) {
+    case 1: glUniform1fv(u.location, 1, values.begin()); break;
+    case 2: glUniform2fv(u.location, 1, values.begin()); break;
+    case 3: glUniform3fv(u.location, 1, values.begin()); break;
+    default: glUniform4fv(u.location, 1, values.begin()); break;
+  }
+}
+
+void GpuRenderer::set_v4(unsigned int program, const char* name, const float* values, int count) {
+  Uniform& u = uniform(program, name);
+  if (changes(u, values, count * 4 * static_cast<int>(sizeof(float)))) glUniform4fv(u.location, count, values);
+}
+
+void GpuRenderer::set_v1(unsigned int program, const char* name, const float* values, int count) {
+  Uniform& u = uniform(program, name);
+  if (changes(u, values, count * static_cast<int>(sizeof(float)))) glUniform1fv(u.location, count, values);
 }
 
 GpuRenderer::Group& GpuRenderer::group(const void* buffer, int w, int h) {
@@ -634,6 +672,31 @@ void GpuRenderer::draw_ops() {
 
   glBindVertexArray(vao_);
   glEnable(GL_BLEND);
+  glActiveTexture(GL_TEXTURE0);
+  glDisable(GL_SCISSOR_TEST);
+  // GL state as last set here: a draw sets only what changed.
+  GLuint used = 0, bound = 0;
+  int blend_set = -1;
+  bool scissoring = false;
+  int scissor[4] = {};
+  auto scissor_off = [&]() {
+    if (!scissoring) return;
+    glDisable(GL_SCISSOR_TEST);
+    scissoring = false;
+  };
+  auto scissor_to = [&](int x, int y, int w, int h) {
+    if (!scissoring) glEnable(GL_SCISSOR_TEST);
+    if (!scissoring || x != scissor[0] || y != scissor[1] || w != scissor[2] || h != scissor[3]) {
+      glScissor(x, y, w, h);
+      scissor[0] = x, scissor[1] = y, scissor[2] = w, scissor[3] = h;
+    }
+    scissoring = true;
+  };
+  auto bind_texture = [&](GLuint texture) {
+    if (texture == bound) return;
+    glBindTexture(GL_TEXTURE_2D, texture);
+    bound = texture;
+  };
 
   auto bind = [&]() {
     const Bound& b = targets.back();
@@ -644,11 +707,10 @@ void GpuRenderer::draw_ops() {
   auto apply_clip = [&](GLuint program) {
     const Bound& b = targets.back();
     if (clips.empty()) {
-      glDisable(GL_SCISSOR_TEST);
+      scissor_off();
     } else {
       const Clip& top = clips.back();
-      glEnable(GL_SCISSOR_TEST);
-      glScissor(top.x - b.ox, top.y - b.oy, std::max(top.w, 0), std::max(top.h, 0));
+      scissor_to(top.x - b.ox, top.y - b.oy, std::max(top.w, 0), std::max(top.h, 0));
     }
     float rects[16] = {}, radii[16] = {};
     int count = 0;
@@ -662,22 +724,24 @@ void GpuRenderer::draw_ops() {
       std::copy(it->radii, it->radii + 4, radii + count * 4);
       count++;
     }
-    glUniform1i(uniform(program, "u_clips"), count);
-    glUniform4fv(uniform(program, "u_clip_rect"), 4, rects);
-    glUniform4fv(uniform(program, "u_clip_radii"), 4, radii);
+    set_i(program, "u_clips", count);
+    set_v4(program, "u_clip_rect", rects, 4);
+    set_v4(program, "u_clip_radii", radii, 4);
   };
   auto begin_draw = [&](GLuint program, int x, int y, int w, int h) {
     const Bound& b = targets.back();
-    glUseProgram(program);
-    glUniform2f(uniform(program, "u_size"), static_cast<float>(b.target->width),
-                static_cast<float>(b.target->height));
-    glUniform2f(uniform(program, "u_origin"), static_cast<float>(b.ox), static_cast<float>(b.oy));
-    glUniform4f(uniform(program, "u_quad"), static_cast<float>(x), static_cast<float>(y),
-                static_cast<float>(w), static_cast<float>(h));
-    glUniform1f(uniform(program, "u_alpha"), alpha);
+    if (program != used) glUseProgram(program);
+    used = program;
+    set_f(program, "u_size", {static_cast<float>(b.target->width),
+                static_cast<float>(b.target->height)});
+    set_f(program, "u_origin", {static_cast<float>(b.ox), static_cast<float>(b.oy)});
+    set_f(program, "u_quad", {static_cast<float>(x), static_cast<float>(y),
+                static_cast<float>(w), static_cast<float>(h)});
+    set_f(program, "u_alpha", {alpha});
     apply_clip(program);
-    if (blend == ER_BLEND_ADD) glBlendFunc(GL_ONE, GL_ONE);
-    else glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+    const int wanted = blend == ER_BLEND_ADD ? ER_BLEND_ADD : 0;
+    if (wanted != blend_set) glBlendFunc(GL_ONE, wanted == ER_BLEND_ADD ? GL_ONE : GL_ONE_MINUS_SRC_ALPHA);
+    blend_set = wanted;
   };
   // Radii as the software rasterizer clamps them: no corner wider than half the shorter side.
   auto clamp_radii = [](const int in[4], int w, int h, float out[4]) {
@@ -691,11 +755,11 @@ void GpuRenderer::draw_ops() {
     float radii[4];
     clamp_radii(op.radii, op.w, op.h, radii);
     const auto f = premultiplied(fill);
-    glUniform4f(uniform(shape_, "u_rect"), static_cast<float>(op.x), static_cast<float>(op.y),
-                static_cast<float>(op.w), static_cast<float>(op.h));
-    glUniform4fv(uniform(shape_, "u_radii"), 1, radii);
-    glUniform1i(uniform(shape_, "u_mode"), mode);
-    glUniform4fv(uniform(shape_, "u_fill"), 1, f.data());
+    set_f(shape_, "u_rect", {static_cast<float>(op.x), static_cast<float>(op.y),
+                static_cast<float>(op.w), static_cast<float>(op.h)});
+    set_v4(shape_, "u_radii", radii, 1);
+    set_i(shape_, "u_mode", mode);
+    set_v4(shape_, "u_fill", f.data(), 1);
     if (mode != 0) {
       const float e[4] = {static_cast<float>(edges[0]), static_cast<float>(edges[1]), static_cast<float>(edges[2]),
                           static_cast<float>(edges[3])};
@@ -708,9 +772,9 @@ void GpuRenderer::draw_ops() {
         const auto p = premultiplied(colors[i]);
         std::copy(p.begin(), p.end(), c + i * 4);
       }
-      glUniform4fv(uniform(shape_, "u_edges"), 1, e);
-      glUniform4fv(uniform(shape_, "u_inner_radii"), 1, inner);
-      glUniform4fv(uniform(shape_, "u_edge_color"), 4, c);
+      set_v4(shape_, "u_edges", e, 1);
+      set_v4(shape_, "u_inner_radii", inner, 1);
+      set_v4(shape_, "u_edge_color", c, 4);
     }
     stats_.draws++;
     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
@@ -719,14 +783,13 @@ void GpuRenderer::draw_ops() {
                           int src_w, int src_h, const float* m, float op_alpha) {
     if (w <= 0 || h <= 0) return;
     begin_draw(image_, x, y, w, h);
-    glUniform1f(uniform(image_, "u_alpha"), alpha * op_alpha);
-    glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_2D, texture);
-    glUniform1i(uniform(image_, "u_tex"), 0);
-    glUniform1i(uniform(image_, "u_kind"), kind);
-    glUniform2f(uniform(image_, "u_shift"), shift_x, shift_y);
-    glUniform2f(uniform(image_, "u_src_size"), static_cast<float>(src_w), static_cast<float>(src_h));
-    if (m) glUniform1fv(uniform(image_, "u_m"), 6, m);
+    set_f(image_, "u_alpha", {alpha * op_alpha});
+    bind_texture(texture);
+    set_i(image_, "u_tex", 0);
+    set_i(image_, "u_kind", kind);
+    set_f(image_, "u_shift", {shift_x, shift_y});
+    set_f(image_, "u_src_size", {static_cast<float>(src_w), static_cast<float>(src_h)});
+    if (m) set_v1(image_, "u_m", m, 6);
     stats_.draws++;
     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
   };
@@ -776,8 +839,7 @@ void GpuRenderer::draw_ops() {
           h = y1 - y;
         }
         if (w <= 0 || h <= 0) break;
-        glEnable(GL_SCISSOR_TEST);
-        glScissor(x - b.ox, y - b.oy, w, h);
+        scissor_to(x - b.ox, y - b.oy, w, h);
         glClearColor(0, 0, 0, 0);
         glClear(GL_COLOR_BUFFER_BIT);
         break;
@@ -826,9 +888,10 @@ void GpuRenderer::draw_ops() {
         Group& g = group(op.buffer, op.w, op.h);
         g.ox = op.x;
         g.oy = op.y;
+        bound = 0; // a new or resized target binds its texture
         targets.push_back({&g.target, op.x, op.y});
         bind();
-        glDisable(GL_SCISSOR_TEST);
+        scissor_off();
         glClearColor(0, 0, 0, 0);
         glClear(GL_COLOR_BUFFER_BIT);
         break;
@@ -864,10 +927,10 @@ void GpuRenderer::draw_ops() {
         begin_draw(shape_, op.x, op.y, op.w, op.h);
         float radii[4];
         clamp_radii(op.radii, op.w, op.h, radii);
-        glUniform4f(uniform(shape_, "u_rect"), static_cast<float>(op.x), static_cast<float>(op.y),
-                    static_cast<float>(op.w), static_cast<float>(op.h));
-        glUniform4fv(uniform(shape_, "u_radii"), 1, radii);
-        glUniform1i(uniform(shape_, "u_mode"), op.mode == ER_GRADIENT_LINEAR ? 3 : 4);
+        set_f(shape_, "u_rect", {static_cast<float>(op.x), static_cast<float>(op.y),
+                    static_cast<float>(op.w), static_cast<float>(op.h)});
+        set_v4(shape_, "u_radii", radii, 1);
+        set_i(shape_, "u_mode", op.mode == ER_GRADIENT_LINEAR ? 3 : 4);
         const int count = std::min(op.stop_count, 4);
         float colors[16] = {}, positions[4] = {};
         for (int i = 0; i < count; i++) {
@@ -878,9 +941,9 @@ void GpuRenderer::draw_ops() {
           colors[i * 4 + 3] = static_cast<float>(c & 0xFF);
           positions[i] = op.stops[i].position;
         }
-        glUniform4fv(uniform(shape_, "u_stop_color"), 4, colors);
-        glUniform1fv(uniform(shape_, "u_stop_pos"), 4, positions);
-        glUniform1i(uniform(shape_, "u_stop_count"), count);
+        set_v4(shape_, "u_stop_color", colors, 4);
+        set_v1(shape_, "u_stop_pos", positions, 4);
+        set_i(shape_, "u_stop_count", count);
         // The table's size and the index scale, as the software ramp works them out.
         float extent, to_idx, min_p = 0.0f;
         int step = 0;
@@ -896,39 +959,42 @@ void GpuRenderer::draw_ops() {
         const int n = std::clamp(static_cast<int>(extent) + 1, 2, 1024);
         to_idx = extent > 1e-6f ? static_cast<float>(n - 1) / extent : 0.0f;
         if (op.mode == ER_GRADIENT_LINEAR) step = static_cast<int>(std::lrint(op.f[0] * to_idx * 65536.0f));
-        glUniform2f(uniform(shape_, "u_dir"), op.f[0], op.f[1]);
-        glUniform1f(uniform(shape_, "u_min_p"), min_p);
-        glUniform1f(uniform(shape_, "u_to_idx"), to_idx);
-        glUniform1i(uniform(shape_, "u_step"), step);
-        glUniform1i(uniform(shape_, "u_lut_n"), n);
+        set_f(shape_, "u_dir", {op.f[0], op.f[1]});
+        set_f(shape_, "u_min_p", {min_p});
+        set_f(shape_, "u_to_idx", {to_idx});
+        set_i(shape_, "u_step", step);
+        set_i(shape_, "u_lut_n", n);
         stats_.draws++;
         glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
         break;
       }
       case ER_CANVAS_IMAGE_REGION: {
+        const std::uint64_t uploads = stats_.uploads;
         const Image& img = image(op.buffer, op.name, op.slot, op.width, op.mode);
+        if (stats_.uploads != uploads) bound = img.texture;
         begin_draw(image_, op.x, op.y, op.w, op.h);
-        glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_2D, img.texture);
-        glUniform1i(uniform(image_, "u_tex"), 0);
-        glUniform1i(uniform(image_, "u_kind"), 3);
-        glUniform4f(uniform(image_, "u_dst"), static_cast<float>(op.x), static_cast<float>(op.y),
-                    static_cast<float>(op.w), static_cast<float>(op.h));
-        glUniform4f(uniform(image_, "u_src"), static_cast<float>(op.src[0]), static_cast<float>(op.src[1]),
-                    static_cast<float>(op.src[2]), static_cast<float>(op.src[3]));
-        glUniform4f(uniform(image_, "u_tint"), static_cast<float>((op.argb >> 16) & 0xFF),
-                    static_cast<float>((op.argb >> 8) & 0xFF), static_cast<float>(op.argb & 0xFF), op.f[0]);
+        bind_texture(img.texture);
+        set_i(image_, "u_tex", 0);
+        set_i(image_, "u_kind", 3);
+        set_f(image_, "u_dst", {static_cast<float>(op.x), static_cast<float>(op.y),
+                    static_cast<float>(op.w), static_cast<float>(op.h)});
+        set_f(image_, "u_src", {static_cast<float>(op.src[0]), static_cast<float>(op.src[1]),
+                    static_cast<float>(op.src[2]), static_cast<float>(op.src[3])});
+        set_f(image_, "u_tint", {static_cast<float>((op.argb >> 16) & 0xFF),
+                    static_cast<float>((op.argb >> 8) & 0xFF), static_cast<float>(op.argb & 0xFF), op.f[0]});
         float radii[4];
         clamp_radii(op.radii, op.area[2], op.area[3], radii);
-        glUniform4f(uniform(image_, "u_mask"), static_cast<float>(op.area[0]),
-                    static_cast<float>(op.area[1]), static_cast<float>(op.area[2]), static_cast<float>(op.area[3]));
-        glUniform4fv(uniform(image_, "u_mask_radii"), 1, radii);
+        set_f(image_, "u_mask", {static_cast<float>(op.area[0]),
+                    static_cast<float>(op.area[1]), static_cast<float>(op.area[2]), static_cast<float>(op.area[3])});
+        set_v4(image_, "u_mask_radii", radii, 1);
         stats_.draws++;
         glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
         break;
       }
       case ER_CANVAS_GLYPH: {
+        const std::uint64_t uploads = stats_.uploads;
         const Glyph& g = glyph(op.buffer, op.w, op.h, op.mode);
+        if (stats_.uploads != uploads) bound = g.texture;
         // The glyph's box (wider by the italic shear), cut to the text's clip.
         const int reach = op.f[0] != 0.0f ? static_cast<int>(static_cast<float>(op.h - 1) * 0.2f) + 2 : 0;
         int x = std::max(op.x, op.area[0]), y = std::max(op.y, op.area[1]);
@@ -936,15 +1002,14 @@ void GpuRenderer::draw_ops() {
         const int y1 = std::min(op.y + op.h, op.area[1] + op.area[3]);
         if (x1 <= x || y1 <= y) break;
         begin_draw(image_, x, y, x1 - x, y1 - y);
-        glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_2D, g.texture);
-        glUniform1i(uniform(image_, "u_tex"), 0);
-        glUniform1i(uniform(image_, "u_kind"), 2);
-        glUniform2f(uniform(image_, "u_shift"), static_cast<float>(op.x), static_cast<float>(op.y));
-        glUniform2f(uniform(image_, "u_src_size"), static_cast<float>(g.width), static_cast<float>(g.height));
-        glUniform1i(uniform(image_, "u_italic"), op.f[0] == 0.0f ? 0 : op.mode == 1 ? 1 : 2);
+        bind_texture(g.texture);
+        set_i(image_, "u_tex", 0);
+        set_i(image_, "u_kind", 2);
+        set_f(image_, "u_shift", {static_cast<float>(op.x), static_cast<float>(op.y)});
+        set_f(image_, "u_src_size", {static_cast<float>(g.width), static_cast<float>(g.height)});
+        set_i(image_, "u_italic", op.f[0] == 0.0f ? 0 : op.mode == 1 ? 1 : 2);
         const auto c = premultiplied(op.argb);
-        glUniform4fv(uniform(image_, "u_color"), 1, c.data());
+        set_v4(image_, "u_color", c.data(), 1);
         stats_.draws++;
         glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
         break;
@@ -956,7 +1021,8 @@ void GpuRenderer::draw_ops() {
         if (!from || op.w <= 0 || op.h <= 0) break;
         const Target source = from->target;
         Group& kept = group(op.buffer, source.width, source.height);
-        glDisable(GL_SCISSOR_TEST);
+        bound = 0;
+        scissor_off();
         glBindFramebuffer(GL_READ_FRAMEBUFFER, source.fbo);
         glBindFramebuffer(GL_DRAW_FRAMEBUFFER, kept.target.fbo);
         glBlitFramebuffer(0, 0, op.w, op.h, 0, 0, op.w, op.h, GL_COLOR_BUFFER_BIT, GL_NEAREST);
@@ -971,14 +1037,14 @@ void GpuRenderer::draw_ops() {
         const float cr = std::max(static_cast<float>(r) - mid, 0.0f);
         begin_draw(shape_, op.x, op.y, op.w, op.h);
         const auto f = premultiplied(op.argb);
-        glUniform4f(uniform(shape_, "u_rect"), static_cast<float>(op.x), static_cast<float>(op.y),
-                    static_cast<float>(op.w), static_cast<float>(op.h));
-        glUniform1i(uniform(shape_, "u_mode"), 5);
-        glUniform4fv(uniform(shape_, "u_fill"), 1, f.data());
-        glUniform3f(uniform(shape_, "u_ring"), static_cast<float>(r), bw, std::max(static_cast<float>(r) - bw, 0.0f));
-        glUniform3f(uniform(shape_, "u_line"), static_cast<float>(op.w) * 0.5f - mid - cr,
-                    static_cast<float>(op.h) * 0.5f - mid - cr, cr);
-        glUniform2f(uniform(shape_, "u_sweep"), op.f[0], op.f[1]);
+        set_f(shape_, "u_rect", {static_cast<float>(op.x), static_cast<float>(op.y),
+                    static_cast<float>(op.w), static_cast<float>(op.h)});
+        set_i(shape_, "u_mode", 5);
+        set_v4(shape_, "u_fill", f.data(), 1);
+        set_f(shape_, "u_ring", {static_cast<float>(r), bw, std::max(static_cast<float>(r) - bw, 0.0f)});
+        set_f(shape_, "u_line", {static_cast<float>(op.w) * 0.5f - mid - cr,
+                    static_cast<float>(op.h) * 0.5f - mid - cr, cr});
+        set_f(shape_, "u_sweep", {op.f[0], op.f[1]});
         stats_.draws++;
         glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
         break;
@@ -987,11 +1053,11 @@ void GpuRenderer::draw_ops() {
         if (op.w <= 0 || op.h <= 0) break;
         if (!pixels_) {
           glGenTextures(1, &pixels_);
-          glBindTexture(GL_TEXTURE_2D, pixels_);
+          bind_texture(pixels_);
           glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
           glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
         }
-        glBindTexture(GL_TEXTURE_2D, pixels_);
+        bind_texture(pixels_);
         stats_.pixel_ops++;
         stats_.pixel_bytes += static_cast<std::uint64_t>(op.w) * op.h * 4;
         gl::tex_image_argb(op.w, op.h, recorded.pixels.data());
@@ -1001,7 +1067,7 @@ void GpuRenderer::draw_ops() {
       }
       case ER_CANVAS_MOVE: {
         // Through the copy target: a framebuffer cannot blit onto itself.
-        glDisable(GL_SCISSOR_TEST);
+        scissor_off();
         glBindFramebuffer(GL_READ_FRAMEBUFFER, target_.fbo);
         glBindFramebuffer(GL_DRAW_FRAMEBUFFER, copy_.fbo);
         glBlitFramebuffer(op.x, op.y, op.x + op.w, op.y + op.h, op.x, op.y, op.x + op.w, op.y + op.h,
