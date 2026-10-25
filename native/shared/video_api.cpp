@@ -432,7 +432,8 @@ bool sample(const char* image_name, int dst_x, int dst_y, int dst_w, int dst_h, 
   if (!find(image_name, layer)) return false;
   rgb[0] = rgb[1] = rgb[2] = 0;
   const video::Frame* frame = layer.frame;
-  if (!frame || dst_w <= 0 || dst_h <= 0) return true;
+  // A frame without planes lives in a texture only (Android's players): it reads as black here.
+  if (!frame || !frame->planes[0] || dst_w <= 0 || dst_h <= 0) return true;
   // The same fit as GlVideo::draw.
   const float picture = frame->width * frame->aspect / frame->height, box = float(dst_w) / dst_h;
   float u = (x + 0.5f - dst_x) / dst_w, v = (y + 0.5f - dst_y) / dst_h;

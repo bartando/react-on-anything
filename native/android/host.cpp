@@ -10,6 +10,7 @@
 // and <files>/options.env, KEY=VALUE lines set in the environment before boot: PS5_REACT_GPU=0 draws
 // with the software rasterizer instead, PS5_REACT_INPUT_SCRIPT runs a script as on the desktop.
 #include "host_platform.hpp"
+#include "java.hpp"
 #include "network.hpp"
 #include "image_loader.hpp"
 #include "archives.hpp"
@@ -523,6 +524,7 @@ int32_t on_input(android_app* app, AInputEvent* event) {
 
 void android_main(android_app* app) {
   log_output();
+  java::start(app->activity->vm, app->activity->clazz);
   // The engine's state is process-wide: one run per process.
   static Host host;
   host.app = app;

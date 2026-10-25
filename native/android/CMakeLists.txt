@@ -23,7 +23,7 @@ add_library(android_native_app_glue STATIC "${ANDROID_NDK}/sources/android/nativ
 target_include_directories(android_native_app_glue PUBLIC "${ANDROID_NDK}/sources/android/native_app_glue")
 
 set(SHARED ../shared)
-add_library(main SHARED host.cpp host_platform.cpp network_platform.cpp unavailable.cpp
+add_library(main SHARED host.cpp host_platform.cpp network_platform.cpp unavailable.cpp java.cpp media_player.cpp
   ../desktop/package_installer.cpp ../desktop/browser_capture.cpp
   ${SHARED}/network.cpp ${SHARED}/network_api.cpp
   ${SHARED}/package_api.cpp ${SHARED}/browser_capture_api.cpp ${SHARED}/lan.cpp ${SHARED}/lan_api.cpp
@@ -31,11 +31,12 @@ add_library(main SHARED host.cpp host_platform.cpp network_platform.cpp unavaila
   ${SHARED}/audio_output_api.cpp ${SHARED}/host_api.cpp ${SHARED}/removals.cpp "${HUI_ROOT}/src/audio/mixer.cpp"
   ${SHARED}/gl_presenter.cpp ${SHARED}/frame_stats.cpp ${SHARED}/js_heap.cpp ${SHARED}/js_profiler.cpp
   ${SHARED}/damage_tracker.cpp ${SHARED}/canvas_trace.cpp ${SHARED}/gpu_renderer.cpp ${SHARED}/render_workers.cpp
-  ${SHARED}/input_script.cpp ${SHARED}/screenshot.cpp ${SHARED}/text_shaper.cpp
+  ${SHARED}/input_script.cpp ${SHARED}/screenshot.cpp ${SHARED}/text_shaper.cpp ${SHARED}/video_api.cpp
   "${APP_LAYOUT}/assets.generated.c" "${APP_LAYOUT}/sounds.generated.c")
 target_compile_features(main PRIVATE cxx_std_20)
 target_compile_options(main PRIVATE -Wall -Wextra -Werror)
-target_include_directories(main PRIVATE ${SHARED} "${APP_GENERATED}" "${STB_IMAGE_DIR}" "${HUI_ROOT}/src"
+# media_player.hpp stands in for the FFmpeg player behind video_player.hpp.
+target_include_directories(main PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${SHARED} "${APP_GENERATED}" "${STB_IMAGE_DIR}" "${HUI_ROOT}/src"
   "${ER_ROOT}/engine/text" "${ANDROID_DEPS}/include")
 # Downloads past 2 GiB need 64-bit file offsets on 32-bit ARM too.
 target_compile_definitions(main PRIVATE _FILE_OFFSET_BITS=64 PS5_REACT_WIDTH=${APP_LAYOUT_WIDTH} PS5_REACT_HEIGHT=${APP_LAYOUT_HEIGHT})

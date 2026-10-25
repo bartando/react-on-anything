@@ -22,6 +22,7 @@ On the device, under `/sdcard/Android/data/<package>/files`:
 | `sandbox/` | `/app0`, `/download0`, `/temp0` resolve here |
 | `options.env` | `KEY=VALUE` lines set before boot (`--options 'A=1;B=2'`) |
 
-Logs go to logcat under the tag `ps5-react`. Not there yet: video playback (FFmpeg) and archives
-(libarchive); their APIs refuse each request. The system's CA store is gathered into one file for curl
+Logs go to logcat under the tag `ps5-react`. Video plays through the system's MediaPlayer
+(`native/android/media_player.hpp`), which decodes in hardware and outputs the sound itself; it has no
+subtitles or upscalers yet. Archives (libarchive) are not there yet; their API refuses each request. The system's CA store is gathered into one file for curl
 at startup.

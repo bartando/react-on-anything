@@ -3,7 +3,7 @@
 // Additional attribution term: see LICENSE-ATTRIBUTION.
 // Video playback: one Player per <Video>. FFmpeg demuxes on one thread, video and audio decode on two
 // more; the render thread picks the frame due at each present by the audio clock (gl_video.hpp draws it)
-// and the sound mixer plays the audio.
+// and the sound mixer plays the audio. Android has a Player of its own over the system's MediaPlayer.
 #pragma once
 
 #include "video_frame.hpp"
@@ -71,6 +71,7 @@ struct Options {
   std::vector<std::string> headers; // "Name: value" request headers for http(s)
 };
 
+#ifndef __ANDROID__
 class AudioRing;
 
 class Player {
@@ -184,5 +185,11 @@ private:
 
   std::thread demux_thread_, video_thread_, audio_thread_;
 };
+#endif
 
 } // namespace video
+
+#ifdef __ANDROID__
+// Android plays through the platform's MediaPlayer behind the same interface (native/android).
+#include "media_player.hpp"
+#endif
