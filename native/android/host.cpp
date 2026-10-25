@@ -140,8 +140,14 @@ constexpr KeyBinding kKeys[] = {
   {AKEYCODE_BUTTON_X, HostAction::square, 7}, {AKEYCODE_BUTTON_L1, HostAction::l1, 8},
   {AKEYCODE_BUTTON_R1, HostAction::r1, 9}, {AKEYCODE_BUTTON_L2, HostAction::l2, 10},
   {AKEYCODE_BUTTON_R2, HostAction::r2, 11}, {AKEYCODE_BUTTON_START, HostAction::options, 14},
-  {AKEYCODE_MENU, HostAction::options, 14},
+  // A remote has no face buttons: its menu key is Triangle, as Android TV apps open a context menu with
+  // it, and its rewind and fast-forward keys are L1 and R1.
+  {AKEYCODE_MENU, HostAction::triangle, 6}, {AKEYCODE_MEDIA_REWIND, HostAction::l1, 8},
+  {AKEYCODE_MEDIA_FAST_FORWARD, HostAction::r1, 9},
 };
+// A remote's OK held this long is Triangle instead; a shorter press confirms when it is let go.
+constexpr std::uint64_t kLongPressMs = 500;
+bool remote_ok(int32_t key) { return key == AKEYCODE_DPAD_CENTER || key == AKEYCODE_ENTER; }
 
 float stick(const AInputEvent* event, int32_t axis) {
   constexpr float deadzone = 0.16f;
@@ -175,6 +181,9 @@ struct Host {
   GamepadState pad;
   std::uint32_t key_buttons = 0, hat_buttons = 0;
   bool l2_down = false, r2_down = false;
+  // The remote's OK while held: when it went down, and whether it already counted as a long press.
+  std::uint64_t ok_down_ms = 0;
+  bool ok_held = false, ok_long = false;
   // A held direction repeats after 350 ms, every 110 ms, as on the desktop.
   int held_button = -1;
   const char* held_action = nullptr;
@@ -338,10 +347,19 @@ struct Host {
         if (action == AKEY_EVENT_ACTION_DOWN) {
           key_buttons |= 1u << binding.button;
           // The host repeats held directions itself; the system's repeats are dropped.
-          if (AKeyEvent_getRepeatCount(event) == 0) press(binding.action, binding.button);
+          if (AKeyEvent_getRepeatCount(event) != 0) return 1;
+          if (remote_ok(key)) {
+            ok_held = true;
+            ok_long = false;
+            ok_down_ms = now_ms();
+          } else {
+            press(binding.action, binding.button);
+          }
         } else if (action == AKEY_EVENT_ACTION_UP) {
           key_buttons &= ~(1u << binding.button);
           release(binding.button);
+          if (remote_ok(key) && ok_held && !ok_long) actions.push_back(action_name(HostAction::confirm));
+          if (remote_ok(key)) ok_held = false;
         }
         return 1;
       }
@@ -404,6 +422,10 @@ struct Host {
   bool frame() {
     if (const char* line = stats.start_frame(now_us())) std::printf("[PS5-REACT] %s\n", line);
     er_set_raster_deferred(true);
+    if (ok_held && !ok_long && now_ms() - ok_down_ms >= kLongPressMs) {
+      ok_long = true;
+      actions.push_back(action_name(HostAction::triangle));
+    }
     for (const char* action : actions)
       if (!dispatch(action)) return false;
     actions.clear();
