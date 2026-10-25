@@ -3,9 +3,10 @@
 ## Unreleased — a GPU mirror in the desktop preview
 
 - `PS5_REACT_GPU_MIRROR=1` makes the desktop preview draw each commit a second time with OpenGL,
-  from the canvas ops, beside the software rasterizer. Each `shot:` compares the two and writes
-  both pictures and their difference next to the shot. On an Anyfin tour (home, a row, a title page)
-  0.1% of pixels differ by more than 2 levels, all at the antialiased edges of rounded rings.
+  from the canvas ops, beside the software rasterizer. Each `shot:` compares the two as the screen
+  shows them, over the presenter's layers (a page's backdrop), and writes both screens and their
+  difference next to the shot. On an Anyfin tour (home, a row, a title page) 0.1% of pixels differ by
+  more than 2 levels, all at the antialiased edges of rounded rings.
 
 - A canvas can answer `ER_CANVAS_CAPTURE` to a shadow, border sweep, arc or vector: the engine draws
   it into a buffer of its own and hands over the pixels (`ER_CANVAS_PIXELS`). The mirror draws those

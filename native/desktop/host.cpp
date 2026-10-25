@@ -421,7 +421,7 @@ struct Host {
       std::printf("[PS5-REACT] shot %s: %s\n", path, saved ? "saved" : std::strerror(errno));
       if (saved && mirror.active()) {
         const std::string base(path, std::strlen(path) - 4);
-        std::printf("[PS5-REACT] %s\n", mirror.compare(er_software_framebuffer(), base).c_str());
+        std::printf("[PS5-REACT] %s\n", mirror.compare(er_software_framebuffer(), presenter, base).c_str());
       }
     } else if (!std::strncmp(action, "touch:", 6)) {
       float x = 0, y = 0;

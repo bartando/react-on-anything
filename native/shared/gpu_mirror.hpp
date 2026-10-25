@@ -23,6 +23,8 @@
 //
 // Ops are recorded on the render thread during er_commit and drawn by replay() on the GL thread. The
 // engine must run one render worker, so the ops arrive in drawing order.
+class GlPresenter;
+
 class GpuMirror {
 public:
   GpuMirror() = default;
@@ -40,11 +42,11 @@ public:
   // viewport, scissor and blending as the presenter expects them (default framebuffer, off).
   void replay();
 
-  // The mirror's picture as ARGB8888, rows top first, like er_software_framebuffer().
-  bool read(std::vector<std::uint32_t>& argb);
-  // Compares the mirror with the software framebuffer: a summary line, and the two pictures and their
-  // difference written next to `path` (path-cpu.bmp, path-gpu.bmp, path-diff.bmp), half size.
-  std::string compare(const std::uint32_t* cpu, const std::string& path);
+  // Compares the mirror with the software framebuffer `cpu`, both on their own and as the screen shows
+  // them, over the presenter's layers (a backdrop the engine leaves a hole for). Returns a summary line
+  // and writes the two screens and their difference next to `path` (path-cpu.bmp, path-gpu.bmp,
+  // path-diff.bmp), half size. With the GL context current, after the frame was presented.
+  std::string compare(const std::uint32_t* cpu, GlPresenter& presenter, const std::string& path);
 
 private:
   struct Target { unsigned int texture = 0, fbo = 0; int width = 0, height = 0; };
@@ -53,7 +55,8 @@ private:
   struct Op;
 
   Target target_;
-  Target copy_;  // scratch for scroll moves
+  Target copy_;    // scratch for scroll moves
+  Target screen_;  // where compare() composites a screen
   int width_ = 0, height_ = 0;
   unsigned int vao_ = 0, shape_ = 0, image_ = 0;
   unsigned int pixels_ = 0;  // the texture captured ops' pixels are drawn from

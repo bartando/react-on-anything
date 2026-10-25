@@ -385,7 +385,7 @@ void GlPresenter::composite(int x, int y, int w, int h) {
   // Creating an image can move the others, so the pointers are taken once all exist.
   for (Drawn& d : drawn)
     if (!d.video) d.image = layer_image(*d.layer);
-  glBindFramebuffer(GL_FRAMEBUFFER, 0);
+  glBindFramebuffer(GL_FRAMEBUFFER, target_fbo_);
   glViewport(x, y, w, h);
   bool covered = false;
   std::size_t begin = 0;
@@ -425,7 +425,7 @@ void GlPresenter::composite_group(std::size_t begin, std::size_t end, bool opaqu
   const int passes = std::max<int>(with_frame ? 1 : 0, (int(end - begin) + kPassLayers - 1) / kPassLayers);
   if (!passes) return;
   glDisable(GL_SCISSOR_TEST);
-  glBindFramebuffer(GL_FRAMEBUFFER, 0);
+  glBindFramebuffer(GL_FRAMEBUFFER, target_fbo_);
   glViewport(x, y, w, h);
   glBindVertexArray(vao_);
   glUseProgram(composite_program_);
@@ -433,7 +433,7 @@ void GlPresenter::composite_group(std::size_t begin, std::size_t end, bool opaqu
   glUniform4f(at("view"), float(x), float(y), float(w), float(h));
   glUniform2f(at("size"), float(width_), float(height_));
   glActiveTexture(GL_TEXTURE0);
-  glBindTexture(GL_TEXTURE_2D, frame_);
+  glBindTexture(GL_TEXTURE_2D, frame_override_ ? frame_override_ : frame_);
   glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
   for (int pass = 0; pass < passes; ++pass) {
     float clip[4 * kPassLayers] = {}, dst[4 * kPassLayers] = {}, src[4 * kPassLayers] = {};
@@ -496,6 +496,26 @@ bool GlPresenter::present(int sw, int sh) {
   }
   staged_ = 0;
   return glGetError() == GL_NO_ERROR;
+}
+
+void GlPresenter::composite_to(unsigned int fbo, unsigned int frame) {
+  // The layers as last presented: the engine's own list is valid only until the commit after it.
+  std::vector<ERLayer> layers;
+  layers.reserve(drawn_layers_.size());
+  for (const DrawnLayer& d : drawn_layers_) {
+    layers.push_back(d.layer);
+    layers.back().image = d.image.c_str();
+  }
+  const std::span<const ERLayer> shown = layers_;
+  layers_ = layers;
+  target_fbo_ = fbo;
+  frame_override_ = frame;
+  glDisable(GL_DEPTH_TEST);
+  glDisable(GL_FRAMEBUFFER_SRGB);
+  composite(0, 0, width_, height_);
+  target_fbo_ = frame_override_ = 0;
+  layers_ = shown;
+  glBindFramebuffer(GL_FRAMEBUFFER, 0);
 }
 
 void GlPresenter::release() {

@@ -3,6 +3,8 @@
 // Additional attribution term: see LICENSE-ATTRIBUTION.
 #include "gpu_mirror.hpp"
 
+#include "gl_presenter.hpp"
+
 #ifdef __APPLE__
 #include <OpenGL/gl3.h>
 #elif defined(PROSPERO)
@@ -361,6 +363,7 @@ void GpuMirror::stop() {
   er_set_canvas(nullptr, nullptr);
   free_target(target_.texture, target_.fbo);
   free_target(copy_.texture, copy_.fbo);
+  free_target(screen_.texture, screen_.fbo);
   for (auto& [buffer, group] : groups_) free_target(group.target.texture, group.target.fbo);
   groups_.clear();
   for (auto& [bitmap, g] : glyphs_) glDeleteTextures(1, &g.texture);
@@ -910,51 +913,89 @@ void GpuMirror::draw_ops() {
   }
 }
 
-bool GpuMirror::read(std::vector<std::uint32_t>& argb) {
-  if (!active()) return false;
-  argb.resize(static_cast<std::size_t>(width_) * height_);
-  glBindFramebuffer(GL_FRAMEBUFFER, target_.fbo);
-  glPixelStorei(GL_PACK_ALIGNMENT, 4);
-  glReadPixels(0, 0, width_, height_, GL_BGRA, GL_UNSIGNED_INT_8_8_8_8_REV, argb.data());
-  glBindFramebuffer(GL_FRAMEBUFFER, 0);
-  return true;
-}
+namespace {
 
-std::string GpuMirror::compare(const std::uint32_t* cpu, const std::string& path) {
-  std::vector<std::uint32_t> gpu;
-  if (!cpu || !read(gpu)) return "gpu mirror: nothing to compare";
-  const std::size_t count = static_cast<std::size_t>(width_) * height_;
-  std::vector<std::uint32_t> diff(count);
+struct Diff {
   std::size_t over[3] = {};
-  int x0 = width_, y0 = height_, x1 = -1, y1 = -1;
-  for (std::size_t i = 0; i < count; i++) {
-    const std::uint32_t a = cpu[i], b = gpu[i];
+  int x0 = 0, y0 = 0, x1 = -1, y1 = -1;
+  std::vector<std::uint32_t> picture;  // red by how far apart, over the second picture's green
+};
+
+// How far apart two pictures are: pixels whose channels differ by more than 2, 16 and 64 levels, and the
+// box around the last.
+Diff difference(const std::vector<std::uint32_t>& a, const std::vector<std::uint32_t>& b, int width, int height,
+                bool picture) {
+  Diff d;
+  d.x0 = width;
+  d.y0 = height;
+  if (picture) d.picture.resize(a.size());
+  for (std::size_t i = 0; i < a.size(); i++) {
     int most = 0;
     for (int shift = 0; shift < 32; shift += 8)
-      most = std::max(most, std::abs(static_cast<int>((a >> shift) & 0xFF) - static_cast<int>((b >> shift) & 0xFF)));
-    if (most > 2) over[0]++;
-    if (most > 16) over[1]++;
+      most = std::max(most, std::abs(static_cast<int>((a[i] >> shift) & 0xFF) - static_cast<int>((b[i] >> shift) & 0xFF)));
+    if (most > 2) d.over[0]++;
+    if (most > 16) d.over[1]++;
     if (most > 64) {
-      over[2]++;
-      const int x = static_cast<int>(i % width_), y = static_cast<int>(i / width_);
-      x0 = std::min(x0, x);
-      y0 = std::min(y0, y);
-      x1 = std::max(x1, x);
-      y1 = std::max(y1, y);
+      d.over[2]++;
+      const int x = static_cast<int>(i % width), y = static_cast<int>(i / width);
+      d.x0 = std::min(d.x0, x);
+      d.y0 = std::min(d.y0, y);
+      d.x1 = std::max(d.x1, x);
+      d.y1 = std::max(d.y1, y);
     }
-    const std::uint32_t level = static_cast<std::uint32_t>(std::min(255, most * 4));
-    diff[i] = 0xFF000000u | (level << 16) | ((b & 0xFF00u) >> 2 & 0xFF00u);
+    if (picture) {
+      const std::uint32_t level = static_cast<std::uint32_t>(std::min(255, most * 4));
+      d.picture[i] = 0xFF000000u | (level << 16) | ((b[i] & 0xFF00u) >> 2 & 0xFF00u);
+    }
   }
-  std::vector<std::uint32_t> cpu_copy(cpu, cpu + count);
-  write_bmp(path + "-cpu.bmp", cpu_copy, width_, height_);
-  write_bmp(path + "-gpu.bmp", gpu, width_, height_);
-  write_bmp(path + "-diff.bmp", diff, width_, height_);
-  char line[512];
-  const double total = static_cast<double>(count) / 100.0;
-  int n = std::snprintf(line, sizeof line, "gpu mirror %s: differ >2 %.3f%%, >16 %.3f%%, >64 %.3f%%", path.c_str(),
-                        over[0] / total, over[1] / total, over[2] / total);
-  if (x1 >= x0) n += std::snprintf(line + n, sizeof line - n, " (box %d,%d-%d,%d)", x0, y0, x1, y1);
-  n += std::snprintf(line + n, sizeof line - n, "; missing:");
+  return d;
+}
+
+// A target's pixels as ARGB8888, rows top first; `flip` for one drawn like the screen, bottom first.
+void read_target(unsigned int fbo, int width, int height, bool flip, std::vector<std::uint32_t>& argb) {
+  argb.resize(static_cast<std::size_t>(width) * height);
+  glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+  glPixelStorei(GL_PACK_ALIGNMENT, 4);
+  glReadPixels(0, 0, width, height, GL_BGRA, GL_UNSIGNED_INT_8_8_8_8_REV, argb.data());
+  glBindFramebuffer(GL_FRAMEBUFFER, 0);
+  if (flip)
+    for (int y = 0; y < height / 2; y++)
+      std::swap_ranges(argb.begin() + static_cast<std::ptrdiff_t>(y) * width,
+                       argb.begin() + static_cast<std::ptrdiff_t>(y + 1) * width,
+                       argb.begin() + static_cast<std::ptrdiff_t>(height - 1 - y) * width);
+}
+
+}  // namespace
+
+std::string GpuMirror::compare(const std::uint32_t* cpu, GlPresenter& presenter, const std::string& path) {
+  if (!active() || !cpu) return "gpu mirror: nothing to compare";
+  if (!screen_.fbo) {
+    if (!make_target(width_, height_, screen_.texture, screen_.fbo)) return "gpu mirror: no screen target";
+    screen_.width = width_;
+    screen_.height = height_;
+  }
+  // The engine's two pictures, then each as the screen shows it: over the presenter's layers.
+  std::vector<std::uint32_t> gpu, cpu_screen, gpu_screen;
+  read_target(target_.fbo, width_, height_, false, gpu);
+  const std::vector<std::uint32_t> cpu_frame(cpu, cpu + static_cast<std::size_t>(width_) * height_);
+  const Diff frame = difference(cpu_frame, gpu, width_, height_, false);
+  presenter.composite_to(screen_.fbo, 0);
+  read_target(screen_.fbo, width_, height_, true, cpu_screen);
+  presenter.composite_to(screen_.fbo, target_.texture);
+  read_target(screen_.fbo, width_, height_, true, gpu_screen);
+  const Diff screen = difference(cpu_screen, gpu_screen, width_, height_, true);
+  write_bmp(path + "-cpu.bmp", cpu_screen, width_, height_);
+  write_bmp(path + "-gpu.bmp", gpu_screen, width_, height_);
+  write_bmp(path + "-diff.bmp", screen.picture, width_, height_);
+
+  char line[640];
+  const double total = static_cast<double>(cpu_frame.size()) / 100.0;
+  int n = std::snprintf(line, sizeof line, "gpu mirror %s: screen differ >2 %.3f%%, >16 %.3f%%, >64 %.3f%%",
+                        path.c_str(), screen.over[0] / total, screen.over[1] / total, screen.over[2] / total);
+  if (screen.x1 >= screen.x0)
+    n += std::snprintf(line + n, sizeof line - n, " (box %d,%d-%d,%d)", screen.x0, screen.y0, screen.x1, screen.y1);
+  n += std::snprintf(line + n, sizeof line - n, "; framebuffer >2 %.3f%%, >64 %.3f%%; missing:",
+                     frame.over[0] / total, frame.over[2] / total);
   for (int kind = 0; kind < ER_CANVAS_OP_COUNT && n > 0 && n < static_cast<int>(sizeof line); kind++)
     if (missing_[kind]) n += std::snprintf(line + n, sizeof line - n, " %s=%llu", kKindNames[kind],
                                            static_cast<unsigned long long>(missing_[kind]));
