@@ -109,6 +109,10 @@ bool same(const ARect& a, const ARect& b) {
   return a.left == b.left && a.top == b.top && a.right == b.right && a.bottom == b.bottom;
 }
 
+bool accepted_dataspace(ADataSpace space) {
+  return space == ADATASPACE_SRGB || space == ADATASPACE_DISPLAY_P3 || space == ADATASPACE_BT2020_PQ;
+}
+
 // Puts `frame` on the video's layer, cut to `source` (buffer pixels) and placed at `destination` (window
 // pixels); empty rects hide it.
 void show(std::uint64_t id, const video::Frame& frame, const ARect& source, const ARect& destination) {
@@ -142,7 +146,10 @@ void show(std::uint64_t id, const video::Frame& frame, const ARect& source, cons
     ASurfaceTransaction_setBuffer(transaction, layer.control, picture->buffer, -1);
     // The NDK takes the metadata by mutable pointer; it only reads it.
     video::LayerColor color = picture->output->color;
-    ASurfaceTransaction_setBufferDataSpace(transaction, layer.control, color.space);
+    // Android 11 takes only a few named dataspaces here (sRGB, Display P3, full-range BT2020_PQ, ...)
+    // and logs an error for each other one; a video's own, limited-range HDR10 included, is never among
+    // them. The codec tags its buffers and the HDR metadata switches the TV, so ask only for those.
+    if (accepted_dataspace(color.space)) ASurfaceTransaction_setBufferDataSpace(transaction, layer.control, color.space);
     if (color.has_mastering) ASurfaceTransaction_setHdrMetadata_smpte2086(transaction, layer.control, &color.mastering);
     if (color.has_light_level) ASurfaceTransaction_setHdrMetadata_cta861_3(transaction, layer.control, &color.light_level);
     layer.before = std::move(layer.showing);

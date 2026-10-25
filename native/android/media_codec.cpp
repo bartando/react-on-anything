@@ -269,7 +269,7 @@ private:
     frame.height = height_;
     frame.aspect = aspect_;
     frame.pts_us = info.presentationTimeUs;
-    frame.transfer = output_->color.space & ADATASPACE_TRANSFER_ST2084 ? video::Transfer::pq
+    frame.transfer = (output_->color.space & ADATASPACE_TRANSFER_MASK) == ADATASPACE_TRANSFER_ST2084 ? video::Transfer::pq
                    : output_->color.hdr ? video::Transfer::hlg : video::Transfer::sdr;
     frame.owner = std::move(picture);
     ready_.push_back(std::move(frame));

@@ -9,7 +9,7 @@
 
 - Video plays on Android through the FFmpeg player, built for 32-bit ARM by `tools/ffmpeg.py`, with the
   picture decoded in hardware by MediaCodec (`native/android/media_codec.hpp`) onto a system layer under
-  the window, which shows 10-bit pictures as they are and switches the TV to HDR for HDR10 and HLG;
+  the window, which shows 10-bit pictures as they are and switches the TV to HDR for HDR10 (HLG untested);
   sampled as a GL texture, the Shield drew them as garbage. H.264 and HEVC become Annex B without
   FFmpeg 7.1's filter, which put a file header's stale parameter sets after a keyframe's own. The system's MediaPlayer, tried first, cannot open HLS with
   fMP4 segments. Audio tracks and subtitles work as on the other hosts; upscalers are not there.
