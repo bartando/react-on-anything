@@ -19,6 +19,10 @@
   render thread meanwhile (GcScheduler::during_collection), and images decode with the system's
   AImageDecoder, shrunk while decoding, 40% faster than stb_image there.
 
+- Finished image loads reach their components in batches that each render once, growing while a
+  render stays under 2ms and shrinking past 4ms, instead of one render per image: a detail page's 90
+  images cost half the JS they did.
+
 - The GPU renderer sets a uniform, program, blend function, scissor or texture only when it changes:
   the Shield's driver charges for every call. The pixels are the same.
 

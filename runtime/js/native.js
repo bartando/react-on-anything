@@ -6,7 +6,7 @@
 import {useEffect, useLayoutEffect, useRef, useState} from 'react';
 import {gamepadSource} from './controller-events.js';
 import {normalizeDownloadManifest} from './download-formats.js';
-import {onFrameUnbatched} from './frame.js';
+import {batched, onFrameUnbatched} from './frame.js';
 
 function host() {
   const api = globalThis.__ps5ReactNative;
@@ -564,16 +564,19 @@ const pendingImages = new Map();
 const arrivedImages = new Map();
 let stopImagePolling = null;
 
-// Each image listener runs outside the frame batch, so its LegacyRoot render commits before elapsed
-// time is checked. A single synchronous render cannot be preempted, but delivery stops after the
-// first listener that carries the frame past the budget.
+// Image listeners run outside the frame batch, a group at a time in a batch of their own: the group
+// renders once, as the batch ends, so its cost is measured before the next group starts. A render
+// cannot be preempted, so delivery stops after the group that carries the frame past the budget.
+// Each React render walks the tree from its root, which on a slow core costs more than re-rendering
+// the images themselves: the group grows while a render takes under half the budget and shrinks
+// when one takes over all of it.
 const IMAGE_DELIVERY_BUDGET_MS = 4;
+const IMAGE_GROUP_MAX = 32;
+let imageGroup = 1;
 
-function pollImages() {
-  for (const result of host().image.poll()) {
-    if (pendingImages.has(result.id)) arrivedImages.set(result.id, result);
-  }
-  const start = performance.now();
+// Hands over up to `count` arrivals; the listeners whose images were released since are skipped.
+function deliverImages(count) {
+  let delivered = 0;
   for (const [id, result] of arrivedImages) {
     const listeners = pendingImages.get(id);
     if (!listeners?.size) {
@@ -581,15 +584,30 @@ function pollImages() {
       continue;
     }
     for (const listener of listeners) {
+      if (delivered === count) return delivered;
       listeners.delete(listener);
       listener(result);
-      if (listeners.size === 0) {
-        pendingImages.delete(id);
-        arrivedImages.delete(id);
-      }
-      if (performance.now() - start >= IMAGE_DELIVERY_BUDGET_MS) break;
+      delivered++;
     }
-    if (performance.now() - start >= IMAGE_DELIVERY_BUDGET_MS) break;
+    pendingImages.delete(id);
+    arrivedImages.delete(id);
+  }
+  return delivered;
+}
+
+function pollImages() {
+  for (const result of host().image.poll()) {
+    if (pendingImages.has(result.id)) arrivedImages.set(result.id, result);
+  }
+  const start = performance.now();
+  while (arrivedImages.size && performance.now() - start < IMAGE_DELIVERY_BUDGET_MS) {
+    const groupStart = performance.now();
+    let delivered = 0;
+    batched(() => { delivered = deliverImages(imageGroup); });
+    if (!delivered) break;
+    const took = performance.now() - groupStart;
+    if (took < IMAGE_DELIVERY_BUDGET_MS / 2) imageGroup = Math.min(imageGroup * 2, IMAGE_GROUP_MAX);
+    else if (took > IMAGE_DELIVERY_BUDGET_MS) imageGroup = Math.max(1, imageGroup >> 1);
   }
   if (pendingImages.size === 0 && arrivedImages.size === 0) {
     stopImagePolling();
