@@ -1,16 +1,20 @@
 diff --git a/engine/core/native_renderer.c b/engine/core/native_renderer.c
-index 55c9d99..3caae7c 100644
+index 55c9d99..76f8a9b 100644
 --- a/engine/core/native_renderer.c
 +++ b/engine/core/native_renderer.c
-@@ -22,6 +22,7 @@
+@@ -22,8 +22,11 @@
  #include "image_registry.h"
  #include "renderer_internal.h"
  #include "rrect.h"
 +#include "er_canvas.h"
  #include <stdbool.h>
  #include <stddef.h>
++#include <string.h>
++#include <stdlib.h>
  
-@@ -93,6 +94,12 @@ typedef struct
+ /*----------------------------------------------------------------------------------------------------------------------
+  - Constants
+@@ -93,6 +96,22 @@ typedef struct
      int band_oy;
      int band_h;
  
@@ -19,11 +23,21 @@ index 55c9d99..3caae7c 100644
 +    uint8_t canvas_depth;
 +    const uint8_t* canvas_group;
 +    size_t canvas_group_bytes;
++    /* An op being captured (ER_CANVAS_CAPTURE): its buffer and where it lands, the depth it was offered
++     * at (-1: none), and the blit state it suspended. */
++    uint32_t* capture_buf;
++    size_t capture_cap;
++    int capture_x, capture_y, capture_w, capture_h;
++    int capture_depth;
++    uint32_t* saved_scratch_buf;
++    int saved_scratch_w, saved_scratch_h, saved_scratch_ox, saved_scratch_oy;
++    int saved_mask_floor;
++    uint8_t saved_alpha, saved_blend;
 +
      /* Scratch redirect: when scratch_buf is non-NULL all blit calls write into it. */
      uint32_t* scratch_buf;
      int scratch_w;
-@@ -123,6 +130,9 @@ typedef struct
+@@ -123,6 +142,9 @@ typedef struct
   * (always called before the first render). */
  static NRCtx s_ctx[ERUI_RENDER_WORKERS];
  
@@ -33,7 +47,7 @@ index 55c9d99..3caae7c 100644
  /** @brief The calling worker's blit-layer context (constant &s_ctx[0] in single-worker builds).
   *  With workers installed each call asks the host which worker it is, so functions fetch it once. */
  static inline NRCtx* rc(void)
-@@ -484,9 +494,75 @@ const EmbeddedRenderBackend* er_backend(void)
+@@ -484,9 +506,172 @@ const EmbeddedRenderBackend* er_backend(void)
      return g_backend;
  }
  
@@ -41,6 +55,16 @@ index 55c9d99..3caae7c 100644
 +{
 +    g_er_canvas = fn;
 +    s_canvas_ctx = ctx;
++    for (int i = 0; i < ERUI_RENDER_WORKERS; i++)
++    {
++        s_ctx[i].capture_depth = -1;
++        if (!fn)
++        {
++            free(s_ctx[i].capture_buf);
++            s_ctx[i].capture_buf = NULL;
++            s_ctx[i].capture_cap = 0;
++        }
++    }
 +}
 +
 +ERCanvasFn er_get_canvas(void)
@@ -48,19 +72,98 @@ index 55c9d99..3caae7c 100644
 +    return g_er_canvas;
 +}
 +
++/* Starts drawing into the capture buffer: the op's bounds, cut to the clip rect, unmasked, at full alpha
++ * and in normal blending. False when none of it is visible. */
++static bool capture_begin(NRCtx* ctx, const int bounds[4])
++{
++    int x = bounds[0], y = bounds[1], w = bounds[2], h = bounds[3];
++    if (!apply_clip(ctx, &x, &y, &w, &h))
++        return false;
++    const size_t need = (size_t)w * (size_t)h;
++    if (need > ctx->capture_cap)
++    {
++        uint32_t* grown = (uint32_t*)realloc(ctx->capture_buf, need * sizeof(uint32_t));
++        if (!grown)
++            return false;
++        ctx->capture_buf = grown;
++        ctx->capture_cap = need;
++    }
++    memset(ctx->capture_buf, 0, need * sizeof(uint32_t));
++    ctx->capture_x = x;
++    ctx->capture_y = y;
++    ctx->capture_w = w;
++    ctx->capture_h = h;
++    ctx->capture_depth = ctx->canvas_depth;
++    ctx->saved_scratch_buf = ctx->scratch_buf;
++    ctx->saved_scratch_w = ctx->scratch_w;
++    ctx->saved_scratch_h = ctx->scratch_h;
++    ctx->saved_scratch_ox = ctx->scratch_ox;
++    ctx->saved_scratch_oy = ctx->scratch_oy;
++    ctx->saved_mask_floor = ctx->mask_floor;
++    ctx->saved_alpha = ctx->draw_alpha;
++    ctx->saved_blend = ctx->blend_mode;
++    ctx->scratch_buf = ctx->capture_buf;
++    ctx->scratch_w = w;
++    ctx->scratch_h = h;
++    ctx->scratch_ox = x;
++    ctx->scratch_oy = y;
++    ctx->mask_floor = ctx->clip_depth;
++    ctx->draw_alpha = 255U;
++    ctx->blend_mode = ER_BLEND_NORMAL;
++    return true;
++}
++
++/* Restores what the capture suspended and hands its pixels over; ones the canvas does not take go on
++ * screen as they would have, through the restored clips, alpha and blend mode. */
++static void capture_end(NRCtx* ctx)
++{
++    ctx->scratch_buf = ctx->saved_scratch_buf;
++    ctx->scratch_w = ctx->saved_scratch_w;
++    ctx->scratch_h = ctx->saved_scratch_h;
++    ctx->scratch_ox = ctx->saved_scratch_ox;
++    ctx->scratch_oy = ctx->saved_scratch_oy;
++    ctx->mask_floor = ctx->saved_mask_floor;
++    ctx->draw_alpha = ctx->saved_alpha;
++    ctx->blend_mode = ctx->saved_blend;
++    const int depth = ctx->capture_depth;
++    ctx->capture_depth = -1;
++    ERCanvasOp op = {0};
++    op.kind = ER_CANVAS_PIXELS;
++    op.depth = (uint8_t)depth;
++    op.buffer = ctx->capture_buf;
++    op.width = ctx->capture_w;
++    op.x = ctx->capture_x;
++    op.y = ctx->capture_y;
++    op.w = ctx->capture_w;
++    op.h = ctx->capture_h;
++    if (g_er_canvas(&op, s_canvas_ctx) == ER_CANVAS_TAKEN)
++        return;
++    ctx->canvas_depth++;
++    er_blit_blend(ctx->capture_buf, ctx->capture_w * (int)sizeof(uint32_t), 255U, op.x, op.y, op.w, op.h);
++    ctx->canvas_depth--;
++}
++
 +bool er_canvas_offer(ERCanvasOp* op)
 +{
 +    NRCtx* const ctx = rc();
 +    op->depth = ctx->canvas_depth;
-+    if (g_er_canvas(op, s_canvas_ctx))
++    const int answer = g_er_canvas(op, s_canvas_ctx);
++    if (answer == ER_CANVAS_TAKEN)
 +        return true;
++    /* One capture at a time: what a captured op draws inside it is part of its pixels. */
++    if (answer == ER_CANVAS_CAPTURE && ctx->capture_depth < 0 && op->bounds[2] > 0 && op->bounds[3] > 0
++        && !capture_begin(ctx, op->bounds))
++        return true; /* nothing of it is visible */
 +    ctx->canvas_depth++;
 +    return false;
 +}
 +
 +void er_canvas_done(void)
 +{
-+    rc()->canvas_depth--;
++    NRCtx* const ctx = rc();
++    ctx->canvas_depth--;
++    if (ctx->capture_depth >= 0 && ctx->capture_depth == ctx->canvas_depth)
++        capture_end(ctx);
 +}
 +
 +void er_canvas_note(ERCanvasOp* op)
@@ -71,7 +174,7 @@ index 55c9d99..3caae7c 100644
 +
 +/* A blit that reaches the screen at depth 0 comes from no primitive: offer it as what it is. True when the
 + * canvas took it. Otherwise the blit runs one level down, so the blits it makes of its own stay quiet. */
-+static bool canvas_raw_blit(NRCtx* ctx, uint8_t kind, const void* src, uint8_t alpha, int x, int y, int w, int h)
++static bool canvas_raw_blit(NRCtx* ctx, uint8_t kind, const void* src, int stride, uint8_t alpha, int x, int y, int w, int h)
 +{
 +    if (ctx->canvas_depth > 0)
 +        return false;
@@ -88,6 +191,14 @@ index 55c9d99..3caae7c 100644
 +    {
 +        op.kind = ER_CANVAS_GROUP_DRAW;
 +        op.buffer = ctx->canvas_group;
++        /* Where in the group's buffer the drawn rows start (its stride is the group's width). */
++        const size_t at = (size_t)(s - ctx->canvas_group);
++        if (stride > 0)
++        {
++            op.pos[0] = (int)((at % (size_t)stride) / 4U);
++            op.pos[1] = (int)(at / (size_t)stride);
++        }
++        op.width = stride / 4;
 +    }
 +    return er_canvas_offer(&op);
 +}
@@ -109,7 +220,7 @@ index 55c9d99..3caae7c 100644
      ctx->scratch_buf = buf;
      ctx->scratch_w = w;
      ctx->scratch_h = h;
-@@ -496,7 +572,17 @@ void er_scratch_begin(uint32_t* buf, int w, int h, int ox, int oy)
+@@ -496,7 +681,17 @@ void er_scratch_begin(uint32_t* buf, int w, int h, int ox, int oy)
  
  void er_scratch_end(void)
  {
@@ -128,7 +239,7 @@ index 55c9d99..3caae7c 100644
  }
  
  /*----------------------------------------------------------------------------------------------------------------------
-@@ -506,6 +592,16 @@ void er_scratch_end(void)
+@@ -506,6 +701,16 @@ void er_scratch_end(void)
  void er_push_clip_rect(int x, int y, int w, int h)
  {
      NRCtx* const ctx = rc();
@@ -145,7 +256,7 @@ index 55c9d99..3caae7c 100644
      if (ctx->clip_depth >= ER_CLIP_STACK_DEPTH)
          return;
  
-@@ -538,6 +634,12 @@ void er_push_clip_rect(int x, int y, int w, int h)
+@@ -538,6 +743,12 @@ void er_push_clip_rect(int x, int y, int w, int h)
  void er_pop_clip_rect(void)
  {
      NRCtx* const ctx = rc();
@@ -158,7 +269,7 @@ index 55c9d99..3caae7c 100644
      if (ctx->clip_depth > 0)
      {
          ctx->clip_depth--;
-@@ -551,7 +653,25 @@ void er_push_clip_rrect(int x, int y, int w, int h, int r_tl, int r_tr, int r_br
+@@ -551,7 +762,25 @@ void er_push_clip_rrect(int x, int y, int w, int h, int r_tl, int r_tr, int r_br
      NRCtx* const ctx = rc();
      if (ctx->clip_depth >= ER_CLIP_STACK_DEPTH)
          return;
@@ -185,7 +296,7 @@ index 55c9d99..3caae7c 100644
      er_rrect_clamp_radii(w, h, &r_tl, &r_tr, &r_br, &r_bl);
      if ((r_tl | r_tr | r_br | r_bl) == 0)
          return; /* square corners: the rect alone is the clip */
-@@ -583,7 +703,15 @@ void er_mask_resume(int floor)
+@@ -583,7 +812,15 @@ void er_mask_resume(int floor)
  
  void er_set_blend_mode(uint8_t mode)
  {
@@ -202,7 +313,7 @@ index 55c9d99..3caae7c 100644
  }
  
  uint8_t er_get_blend_mode(void)
-@@ -596,6 +724,12 @@ void er_push_clip_reset(void)
+@@ -596,6 +833,12 @@ void er_push_clip_reset(void)
      NRCtx* const ctx = rc();
      if (ctx->clip_depth >= ER_CLIP_STACK_DEPTH)
          return;
@@ -215,7 +326,7 @@ index 55c9d99..3caae7c 100644
      /* Full-extent entry pushed WITHOUT intersecting the current top: used by offscreen source
       * captures (transform subtree render) that must see the whole subtree regardless of outer
       * scissors — the captured OUTPUT is clipped by the restored stack when it is blended out. */
-@@ -639,7 +773,15 @@ bool er_get_clip_rect(int* x, int* y, int* w, int* h)
+@@ -639,7 +882,15 @@ bool er_get_clip_rect(int* x, int* y, int* w, int* h)
  
  void er_set_draw_alpha(uint8_t alpha)
  {
@@ -232,7 +343,7 @@ index 55c9d99..3caae7c 100644
  }
  
  uint8_t er_get_draw_alpha(void)
-@@ -885,9 +1027,34 @@ static void fill_through_blend(NRCtx* ctx, uint32_t argb, int x, int y, int w, i
+@@ -885,9 +1136,34 @@ static void fill_through_blend(NRCtx* ctx, uint32_t argb, int x, int y, int w, i
          }
  }
  
@@ -267,7 +378,7 @@ index 55c9d99..3caae7c 100644
      if (ctx->draw_alpha < 255U || ctx->blend_mode != ER_BLEND_NORMAL)
      {
          /* Inherited alpha or a blend mode: the color goes through the blend path (er_blit_blend applies
-@@ -902,9 +1069,27 @@ void er_blit_fill(uint32_t argb, int x, int y, int w, int h)
+@@ -902,9 +1178,27 @@ void er_blit_fill(uint32_t argb, int x, int y, int w, int h)
          emit_fill(ctx, argb, x, y, w, h);
  }
  
@@ -278,7 +389,7 @@ index 55c9d99..3caae7c 100644
      NRCtx* const ctx = rc();
 +    if (g_er_canvas && ctx->canvas_depth == 0)
 +    {
-+        if (canvas_raw_blit(ctx, ER_CANVAS_UNHOOKED, src, 255U, x, y, w, h))
++        if (canvas_raw_blit(ctx, ER_CANVAS_UNHOOKED, src, stride, 255U, x, y, w, h))
 +            return;
 +        if (ctx->canvas_depth > 0)
 +        {
@@ -295,7 +406,7 @@ index 55c9d99..3caae7c 100644
      if (ctx->draw_alpha < 255U || ctx->blend_mode != ER_BLEND_NORMAL)
      {
          /* An opaque copy becomes a blend at the inherited alpha and mode (er_blit_blend applies both). */
-@@ -922,9 +1107,27 @@ void er_blit_copy(const void* src, int stride, int x, int y, int w, int h)
+@@ -922,9 +1216,27 @@ void er_blit_copy(const void* src, int stride, int x, int y, int w, int h)
          emit_copy(ctx, s, stride, x, y, w, h);
  }
  
@@ -306,7 +417,7 @@ index 55c9d99..3caae7c 100644
      NRCtx* const ctx = rc();
 +    if (g_er_canvas && ctx->canvas_depth == 0)
 +    {
-+        if (canvas_raw_blit(ctx, ER_CANVAS_UNHOOKED, src, 255U, x, y, w, h))
++        if (canvas_raw_blit(ctx, ER_CANVAS_UNHOOKED, src, stride, 255U, x, y, w, h))
 +            return true;
 +        if (ctx->canvas_depth > 0)
 +        {
@@ -323,7 +434,7 @@ index 55c9d99..3caae7c 100644
      /* The format-aware hook applies only when the backend can take the buffer as-is: no inherited
       * draw alpha to composite, no scratch capture in flight (scratch buffers are ARGB8888), no blend mode
       * and no rounded clip (the hook replaces whole rects). */
-@@ -953,9 +1156,27 @@ bool er_blit_copy_fmt(const void* src, int stride, ERImageFormat fmt, int x, int
+@@ -953,9 +1265,27 @@ bool er_blit_copy_fmt(const void* src, int stride, ERImageFormat fmt, int x, int
      return true;
  }
  
@@ -334,7 +445,7 @@ index 55c9d99..3caae7c 100644
      NRCtx* const ctx = rc();
 +    if (g_er_canvas && ctx->canvas_depth == 0)
 +    {
-+        if (canvas_raw_blit(ctx, ER_CANVAS_UNHOOKED, src, alpha, x, y, w, h))
++        if (canvas_raw_blit(ctx, ER_CANVAS_UNHOOKED, src, stride, alpha, x, y, w, h))
 +            return;
 +        if (ctx->canvas_depth > 0)
 +        {
@@ -351,7 +462,7 @@ index 55c9d99..3caae7c 100644
      if (ctx->draw_alpha < 255U)
      {
          alpha = (uint8_t)((uint32_t)alpha * ctx->draw_alpha / 255U);
-@@ -975,6 +1196,18 @@ void er_blit_blend(const void* src, int stride, uint8_t alpha, int x, int y, int
+@@ -975,6 +1305,18 @@ void er_blit_blend(const void* src, int stride, uint8_t alpha, int x, int y, int
  void er_blit_clear(int x, int y, int w, int h)
  {
      NRCtx* const ctx = rc();
@@ -370,7 +481,7 @@ index 55c9d99..3caae7c 100644
      if (!apply_clip(ctx, &x, &y, &w, &h))
          return;
      if (ctx->scratch_buf)
-@@ -1008,6 +1241,18 @@ bool er_blit_can_move(void)
+@@ -1008,6 +1350,18 @@ bool er_blit_can_move(void)
  
  void er_blit_move(int sx, int sy, int w, int h, int dx, int dy)
  {
@@ -421,10 +532,10 @@ index 0374130..2b876a1 100644
   *
 diff --git a/engine/include/er_canvas.h b/engine/include/er_canvas.h
 new file mode 100644
-index 0000000..1493799
+index 0000000..a24c31d
 --- /dev/null
 +++ b/engine/include/er_canvas.h
-@@ -0,0 +1,124 @@
+@@ -0,0 +1,153 @@
 +/*
 + * Copyright 2026 PS5 React contributors
 + *
@@ -456,9 +567,13 @@ index 0000000..1493799
 +    /*
 +     * A canvas sees every drawing primitive before the software rasterizer does. With none installed
 +     * (the default) nothing changes: each primitive draws as it always has. An installed canvas gets
-+     * one ERCanvasOp per primitive call and answers whether it took it: true skips the software
-+     * drawing, false lets it run. A canvas that records and answers false traces the frame; one that
-+     * draws the ops itself (on a GPU) answers true.
++     * one ERCanvasOp per primitive call and answers ER_CANVAS_TAKEN (the software drawing is skipped),
++     * ER_CANVAS_PASS (it runs) or, for an op with `bounds`, ER_CANVAS_CAPTURE: the software drawing runs
++     * into a buffer of its own instead of the screen, unmasked by rounded clips, at full alpha and in
++     * normal blending, and the canvas is handed the pixels as ER_CANVAS_PIXELS. That is how a canvas
++     * draws what it cannot draw itself. If it passes on the pixels too, the engine puts them on screen
++     * through the clips, alpha and blend mode the op was drawn under. A canvas that records and passes
++     * traces the frame; one that draws the ops itself (on a GPU) takes them.
 +     *
 +     * Primitives call one another (a bordered rounded rect fills two rounded rects, a text run blends
 +     * its glyphs): `depth` counts the primitives the op is nested in, so a canvas that takes the outer
@@ -478,8 +593,9 @@ index 0000000..1493799
 +        ER_CANVAS_RRECT,            /**< Rounded rect fill: argb, rect, radii[4] (tl, tr, br, bl). */
 +        ER_CANVAS_RRECT_BORDERED,   /**< Rounded rect with a uniform border: argb, argb2 (border), width, radii[0]. */
 +        ER_CANVAS_RRECT_RING,       /**< Rounded ring of width `width`: argb, radii[4]. */
-+        ER_CANVAS_RRECT_RING_EDGES, /**< Ring with per-edge widths and colors: radii[4], border. */
-+        ER_CANVAS_GRADIENT,         /**< A view's background gradient: view, rect. */
++        ER_CANVAS_RRECT_RING_EDGES, /**< Ring with per-edge widths and colors: radii[4], edges[4], edge_colors[4], mode = style. */
++        ER_CANVAS_GRADIENT,         /**< A view's background gradient: rect, mode = ERGradientType, stops, radii[4]
++                                         (clamped), f[] = a linear one's direction (dx, dy per pixel). */
 +        ER_CANVAS_SHADOW,           /**< A view's drop shadow: view, rect (the view's box, not the bleed). */
 +        ER_CANVAS_BORDER_SWEEP,     /**< Animated focus ring: argb, width, radii[0], f[0] phase, f[1] length. */
 +        ER_CANVAS_BORDER_CONIC,     /**< Conic gradient ring: width, radii[0], f[0] from, stops. */
@@ -501,11 +617,22 @@ index 0000000..1493799
 +        /* Groups: a subtree drawn offscreen, then put on screen */
 +        ER_CANVAS_GROUP_BEGIN, /**< Draw into buffer `buffer`, rect = its screen area. */
 +        ER_CANVAS_GROUP_END,   /**< Back to the screen. */
-+        ER_CANVAS_GROUP_DRAW,  /**< Put group `buffer` on screen at rect, at alpha. */
++        ER_CANVAS_GROUP_DRAW,  /**< Put group `buffer` on screen at rect, at alpha, from its pixel pos[] (row length `width`). */
 +        ER_CANVAS_GROUP_XFORM, /**< Put the transform source on screen through matrix m[] (2D: a b c d tx ty, the inverse). */
++        ER_CANVAS_GROUP_KEEP,  /**< Copy the first w x h pixels of group `source` into group `buffer`, kept for later
++                                    commits to draw from (a transformed subtree that did not change). */
 +        /* Diagnostics */
 +        ER_CANVAS_UNHOOKED, /**< Pixels reaching the screen outside any primitive: rect. */
 +        ER_CANVAS_MOVE,     /**< A scroll copy of screen pixels: rect = source, pos[] = destination. */
++        /* Parts of a text block (depth 1 under ER_CANVAS_TEXT) */
++        ER_CANVAS_GLYPH, /**< A baked glyph: buffer = its bitmap, rect = where it lands, mode = bits per pixel
++                              (1 packed MSB first, 2, 4, 8), argb, area = the text's clip, f[0] = 1 italic. */
++        /* Parts of an image (depth 1 under ER_CANVAS_IMAGE) */
++        ER_CANVAS_IMAGE_REGION, /**< Image pixels scaled from src[] to rect: buffer = the pixels (mode = ERImageFormat,
++                                     slot x width = their size, name), argb = tint (f[0] = 1 when tinted),
++                                     area = the box a rounded image is cut to, radii[4] its corners. */
++        /* Pixels */
++        ER_CANVAS_PIXELS, /**< A captured op's pixels: buffer = premultiplied ARGB8888 rows of `width` pixels, rect. */
 +        ER_CANVAS_OP_COUNT
 +    } ERCanvasOpKind;
 +
@@ -514,29 +641,42 @@ index 0000000..1493799
 +        uint8_t kind;  /**< ERCanvasOpKind */
 +        uint8_t depth; /**< Primitives this op is nested in; 0 = called by the compositor. */
 +        uint8_t alpha;
-+        uint8_t mode;
++        uint8_t mode;  /**< Blend mode (ER_CANVAS_BLEND), border style (ring edges: 0 solid, 1 dashed, 2 dotted). */
 +        int x, y, w, h;  /**< The op's rectangle (screen space). */
 +        int radii[4];    /**< tl, tr, br, bl */
 +        int width;       /**< Border or ring width. */
++        int edges[4];    /**< Per-edge widths: left, top, right, bottom. */
++        uint32_t edge_colors[4]; /**< Per-edge colors, same order, straight-alpha ARGB8888. */
 +        uint32_t argb;   /**< Straight-alpha ARGB8888. */
 +        uint32_t argb2;  /**< Second color (a bordered rect's border). */
 +        int pos[2];      /**< A second point (vector origin, move destination). */
++        int area[4];     /**< A second rectangle (a glyph's clip): x, y, w, h. */
++        int src[4];      /**< A source rectangle (an image region's): x, y, w, h. */
++        int bounds[4];   /**< Every pixel the op can touch: x, y, w, h; w = 0 when not known (no capture). */
++        const char* name; /**< An image's registry name. */
 +        float f[2];      /**< Two scalars the kind defines. */
 +        float m[9];      /**< A transform (ER_CANVAS_GROUP_XFORM). */
 +        int slot;        /**< Vector cache slot. */
 +        int stop_count;  /**< Stops behind `stops`. */
 +        const void* buffer; /**< The group's scratch buffer: identifies a group across BEGIN, END and DRAW. */
++        const void* source; /**< Another group (ER_CANVAS_GROUP_KEEP). */
 +        const ERGradientStop* stops;
 +        /* Engine-internal structs, by the kinds that carry them. */
 +        const void* view;   /**< ERViewProps */
 +        const void* image;  /**< ERImageProps */
 +        const void* text;   /**< ERTextRenderParams */
-+        const void* border; /**< ERRRectBorder */
 +        const void* arc;    /**< ERArcSector */
 +    } ERCanvasOp;
 +
-+    /** @brief Answers whether the canvas took the op (true: the software drawing is skipped). */
-+    typedef bool (*ERCanvasFn)(const ERCanvasOp* op, void* ctx);
++    typedef enum
++    {
++        ER_CANVAS_PASS = 0,    /**< The software drawing runs. */
++        ER_CANVAS_TAKEN = 1,   /**< The canvas drew it; the software drawing is skipped. */
++        ER_CANVAS_CAPTURE = 2, /**< Draw it into a buffer and hand over the pixels (ops with bounds only). */
++    } ERCanvasAnswer;
++
++    /** @brief The canvas's answer to an op (ERCanvasAnswer). */
++    typedef int (*ERCanvasFn)(const ERCanvasOp* op, void* ctx);
 +
 +    /** @brief Installs a canvas, or removes it with NULL. Call between commits. */
 +    void er_set_canvas(ERCanvasFn fn, void* ctx);
@@ -550,10 +690,10 @@ index 0000000..1493799
 +
 +#endif /* EMBEDDED_REACT_ER_CANVAS_H */
 diff --git a/engine/rendering/arc.c b/engine/rendering/arc.c
-index ff04d7a..9c0bf98 100644
+index ff04d7a..41050c3 100644
 --- a/engine/rendering/arc.c
 +++ b/engine/rendering/arc.c
-@@ -250,7 +250,25 @@ void er_arc_sector_bbox(float cx,
+@@ -250,7 +250,32 @@ void er_arc_sector_bbox(float cx,
      *y1 += pad;
  }
  
@@ -566,6 +706,13 @@ index ff04d7a..9c0bf98 100644
 +        ERCanvasOp op = {0};
 +        op.kind = ER_CANVAS_ARC_SECTOR;
 +        op.arc = s;
++        if (s)
++        {
++            op.bounds[0] = s->clip_x0;
++            op.bounds[1] = s->clip_y0;
++            op.bounds[2] = s->clip_x1 - s->clip_x0;
++            op.bounds[3] = s->clip_y1 - s->clip_y0;
++        }
 +        if (er_canvas_offer(&op))
 +            return;
 +        arc_fill_sector_sw(s);
@@ -580,15 +727,24 @@ index ff04d7a..9c0bf98 100644
      if (!s)
          return;
 diff --git a/engine/rendering/border_sweep.c b/engine/rendering/border_sweep.c
-index 47de99a..115c76c 100644
+index 47de99a..d8221cc 100644
 --- a/engine/rendering/border_sweep.c
 +++ b/engine/rendering/border_sweep.c
-@@ -236,7 +236,33 @@ static void ring_render(int x, int y, int w, int h, int radius, int width, RingS
+@@ -236,7 +236,43 @@ static void ring_render(int x, int y, int w, int h, int radius, int width, RingS
      }
  }
  
 -void er_border_sweep_render(int x, int y, int w, int h, int radius, int width, uint32_t argb, float phase,
 +static void border_sweep_render_sw(int x, int y, int w, int h, int radius, int width, uint32_t argb, float phase, float length);
++
++static void sweep_bounds(ERCanvasOp* op)
++{
++    const int reach = er_border_sweep_reach(op->radii[0], op->width);
++    op->bounds[0] = op->x - reach;
++    op->bounds[1] = op->y - reach;
++    op->bounds[2] = op->w + 2 * reach;
++    op->bounds[3] = op->h + 2 * reach;
++}
 +
 +void er_border_sweep_render(int x, int y, int w, int h, int radius, int width, uint32_t argb, float phase, float length)
 +{
@@ -602,6 +758,7 @@ index 47de99a..115c76c 100644
 +        op.h = h;
 +        op.radii[0] = op.radii[1] = op.radii[2] = op.radii[3] = radius;
 +        op.width = width;
++        sweep_bounds(&op);
 +        op.argb = argb;
 +        op.f[0] = phase;
 +        op.f[1] = length;
@@ -618,7 +775,7 @@ index 47de99a..115c76c 100644
                              float length)
  {
      if (w <= 0 || h <= 0 || width <= 0 || (argb >> 24) == 0U || length <= 0.0f)
-@@ -251,7 +277,33 @@ void er_border_sweep_render(int x, int y, int w, int h, int radius, int width, u
+@@ -251,7 +287,34 @@ void er_border_sweep_render(int x, int y, int w, int h, int radius, int width, u
      ring_render(x, y, w, h, r, width, sweep_shade, &s);
  }
  
@@ -637,6 +794,7 @@ index 47de99a..115c76c 100644
 +        op.h = h;
 +        op.radii[0] = op.radii[1] = op.radii[2] = op.radii[3] = radius;
 +        op.width = width;
++        sweep_bounds(&op);
 +        op.f[0] = from;
 +        op.stops = stops;
 +        op.stop_count = count;
@@ -653,7 +811,7 @@ index 47de99a..115c76c 100644
                              const ERGradientStop* stops, int count)
  {
      if (w <= 0 || h <= 0 || width <= 0 || count < 1)
-@@ -260,7 +312,34 @@ void er_border_conic_render(int x, int y, int w, int h, int radius, int width, f
+@@ -260,7 +323,35 @@ void er_border_conic_render(int x, int y, int w, int h, int radius, int width, f
      ring_render(x, y, w, h, radius, width, conic_shade, &s);
  }
  
@@ -672,6 +830,7 @@ index 47de99a..115c76c 100644
 +        op.h = h;
 +        op.radii[0] = op.radii[1] = op.radii[2] = op.radii[3] = radius;
 +        op.width = width;
++        sweep_bounds(&op);
 +        op.f[0] = size;
 +        op.f[1] = angle;
 +        op.stops = stops;
@@ -690,10 +849,10 @@ index 47de99a..115c76c 100644
  {
      if (w <= 0 || h <= 0 || width <= 0 || count < 1 || size <= 0.0f)
 diff --git a/engine/rendering/gradient.c b/engine/rendering/gradient.c
-index e368f48..aa28762 100644
+index e368f48..c91b4f0 100644
 --- a/engine/rendering/gradient.c
 +++ b/engine/rendering/gradient.c
-@@ -594,7 +594,29 @@ static void render_radial(const ERViewProps* vp, int x, int y, int w, int h)
+@@ -594,7 +594,45 @@ static void render_radial(const ERViewProps* vp, int x, int y, int w, int h)
   - Functions: Public
   ---------------------------------------------------------------------------------------------------------------------*/
  
@@ -710,6 +869,22 @@ index e368f48..aa28762 100644
 +        op.y = y;
 +        op.w = w;
 +        op.h = h;
++        if (vp)
++        {
++            op.mode = vp->gradient_type;
++            op.stops = vp->gradient_stops;
++            op.stop_count = vp->gradient_stop_count;
++#if ERUI_GRADIENT
++            GradMask mask;
++            mask_init(&mask, vp, w > 0 ? w : 1, h > 0 ? h : 1);
++            op.radii[0] = mask.r_tl;
++            op.radii[1] = mask.r_tr;
++            op.radii[2] = mask.r_br;
++            op.radii[3] = mask.r_bl;
++            if (vp->gradient_type == ER_GRADIENT_LINEAR && w > 0 && h > 0)
++                linear_direction(vp, w, h, &op.f[0], &op.f[1]);
++#endif
++        }
 +        if (er_canvas_offer(&op))
 +            return;
 +        gradient_render_sw(vp, x, y, w, h);
@@ -724,10 +899,53 @@ index e368f48..aa28762 100644
  #if ERUI_GRADIENT
      if (!vp || vp->gradient_type == ER_GRADIENT_NONE)
 diff --git a/engine/rendering/image_scaler.c b/engine/rendering/image_scaler.c
-index d5e28c9..311c512 100644
+index d5e28c9..b6fe93f 100644
 --- a/engine/rendering/image_scaler.c
 +++ b/engine/rendering/image_scaler.c
-@@ -474,7 +474,29 @@ void er_image_unload(const char* name)
+@@ -340,6 +340,42 @@ static void render_region(const ImageEntry* img,
+     if (dst_w <= 0 || dst_h <= 0 || src_w <= 0 || src_h <= 0)
+         return;
+ 
++    if (g_er_canvas)
++    {
++        ERCanvasOp op = {0};
++        op.kind = ER_CANVAS_IMAGE_REGION;
++        op.buffer = img->buf;
++        op.name = img->name;
++        op.mode = img->format;
++        op.slot = img->w;
++        op.width = img->h;
++        op.x = dst_x;
++        op.y = dst_y;
++        op.w = dst_w;
++        op.h = dst_h;
++        op.src[0] = src_x;
++        op.src[1] = src_y;
++        op.src[2] = src_w;
++        op.src[3] = src_h;
++        op.argb = 0xFF000000u | ((uint32_t)tr << 16) | ((uint32_t)tg << 8) | tb;
++        op.f[0] = has_tint ? 1.0f : 0.0f;
++        const ImageMask* const m = s_mask[er_render_worker_id()];
++        if (m)
++        {
++            op.area[0] = m->x;
++            op.area[1] = m->y;
++            op.area[2] = m->w;
++            op.area[3] = m->h;
++            op.radii[0] = m->r_tl;
++            op.radii[1] = m->r_tr;
++            op.radii[2] = m->r_br;
++            op.radii[3] = m->r_bl;
++        }
++        if (er_canvas_offer(&op))
++            return;
++        er_canvas_done();
++    }
++
+     /* Fast path: source and destination regions are the same size and no tint is needed. */
+     if (!has_tint && src_w == dst_w && src_h == dst_h)
+     {
+@@ -474,7 +510,29 @@ void er_image_unload(const char* name)
      image_registry_remove(name);
  }
  
@@ -758,7 +976,7 @@ index d5e28c9..311c512 100644
      if (!props || w <= 0 || h <= 0)
          return;
 diff --git a/engine/rendering/rrect.c b/engine/rendering/rrect.c
-index 84eda70..8a79b89 100644
+index 84eda70..1545e56 100644
 --- a/engine/rendering/rrect.c
 +++ b/engine/rendering/rrect.c
 @@ -60,7 +60,30 @@ static void fill_span(uint32_t argb, int py, int x0, int x1)
@@ -826,7 +1044,7 @@ index 84eda70..8a79b89 100644
  {
      if (w <= 0 || h <= 0 || (argb >> 24) == 0)
          return;
-@@ -729,7 +778,33 @@ static void band_run(const BandCtx* c, int x, int y_abs, int row, int x0, int x1
+@@ -729,7 +778,44 @@ static void band_run(const BandCtx* c, int x, int y_abs, int row, int x0, int x1
      }
  }
  
@@ -847,7 +1065,18 @@ index 84eda70..8a79b89 100644
 +        op.radii[1] = r_tr;
 +        op.radii[2] = r_br;
 +        op.radii[3] = r_bl;
-+        op.border = b;
++        if (b)
++        {
++            op.edges[0] = b->l;
++            op.edges[1] = b->t;
++            op.edges[2] = b->r;
++            op.edges[3] = b->bo;
++            op.edge_colors[0] = b->cl;
++            op.edge_colors[1] = b->ct;
++            op.edge_colors[2] = b->cr;
++            op.edge_colors[3] = b->cb;
++            op.mode = b->style;
++        }
 +        if (er_canvas_offer(&op))
 +            return;
 +        rrect_fill_ring_edges_sw(x, y, w, h, r_tl, r_tr, r_br, r_bl, b);
@@ -861,7 +1090,7 @@ index 84eda70..8a79b89 100644
      int x, int y, int w, int h, int r_tl, int r_tr, int r_br, int r_bl, const ERRRectBorder* b)
  {
      if (w <= 0 || h <= 0 || !b)
-@@ -848,13 +923,65 @@ void er_rrect_fill_ring_edges(
+@@ -848,13 +934,65 @@ void er_rrect_fill_ring_edges(
      }
  }
  
@@ -929,20 +1158,58 @@ index 84eda70..8a79b89 100644
  {
      if (border_w <= 0 || (border_argb >> 24) == 0)
 diff --git a/engine/rendering/shadow.c b/engine/rendering/shadow.c
-index 8fe1779..49f1304 100644
+index 8fe1779..4ed9f2a 100644
 --- a/engine/rendering/shadow.c
 +++ b/engine/rendering/shadow.c
-@@ -168,7 +168,29 @@ static void vblur(int sw, int sh, int r)
+@@ -168,7 +168,67 @@ static void vblur(int sw, int sh, int r)
   - Functions: Public
   ---------------------------------------------------------------------------------------------------------------------*/
  
 +static void shadow_render_sw(const ERViewProps* vp, int x, int y, int w, int h);
++
++/* Where the shadow can land: the box offset and grown by the blur, as shadow_render_sw resolves them (before
++ * it clamps the blur, so a little more). False when the view casts none. */
++static bool shadow_bounds(const ERViewProps* vp, int x, int y, int w, int h, int b[4])
++{
++#if ERUI_SHADOWS
++    float ox, oy;
++    int radius;
++    if (vp->shadow_opacity > 0.0f)
++    {
++        ox = vp->shadow_offset_x;
++        oy = vp->shadow_offset_y;
++        radius = (int)vp->shadow_radius;
++    }
++    else if (vp->elevation > 0)
++    {
++        ox = 0.0f;
++        oy = (float)vp->elevation * SHADOW_ELEV_OFFSET_PER_DP;
++        radius = (int)vp->elevation;
++    }
++    else
++        return false;
++    if (w <= 0 || h <= 0)
++        return false;
++    if (radius < 0)
++        radius = 0;
++    b[0] = x + (int)ox - radius;
++    b[1] = y + (int)oy - radius;
++    b[2] = w + 2 * radius;
++    b[3] = h + 2 * radius;
++    return true;
++#else
++    (void)vp, (void)x, (void)y, (void)w, (void)h, (void)b;
++    return false;
++#endif
++}
 +
  void er_shadow_render(const ERViewProps* vp, int x, int y, int w, int h)
 +{
 +    if (g_er_canvas)
 +    {
 +        ERCanvasOp op = {0};
++        if (!shadow_bounds(vp, x, y, w, h, op.bounds))
++            return;
 +        op.kind = ER_CANVAS_SHADOW;
 +        op.view = vp;
 +        op.x = x;
@@ -963,7 +1230,7 @@ index 8fe1779..49f1304 100644
  #if ERUI_SHADOWS
      /* Resolve shadow parameters from explicit props or from elevation. */
 diff --git a/engine/rendering/transform.c b/engine/rendering/transform.c
-index 8d4c7b2..0e1b37f 100644
+index 8d4c7b2..add8371 100644
 --- a/engine/rendering/transform.c
 +++ b/engine/rendering/transform.c
 @@ -176,7 +176,40 @@ static bool xform_emit_bounds(int dst_x, int dst_y, int dst_w, int dst_h, int* e
@@ -1046,11 +1313,28 @@ index 8d4c7b2..0e1b37f 100644
      int src_x, int src_y, int src_w, int src_h, const float inv_H[9], int dst_x, int dst_y, int dst_w, int dst_h)
  {
      int ex0, ey0, ex1, ey1;
+@@ -969,6 +1031,16 @@ void er_transform_cache_store(int slot, int w, int h)
+     if (xc()->active || slot < 0 || slot >= ERUI_XFORM_CACHE_SLOTS || !er_transform_source_fits(w, h))
+         return;
+     const uint32_t* const src = xsrc();
++    if (g_er_canvas)
++    {
++        ERCanvasOp op = {0};
++        op.kind = ER_CANVAS_GROUP_KEEP;
++        op.buffer = s_xform_cache_px[slot];
++        op.source = src;
++        op.w = w;
++        op.h = h;
++        er_canvas_note(&op);
++    }
+     for (int row = 0; row < h; row++)
+         memcpy(s_xform_cache_px[slot] + (size_t)row * ERUI_XFORM_W,
+                src + (size_t)row * ERUI_XFORM_W,
 diff --git a/engine/rendering/vector.c b/engine/rendering/vector.c
-index 0d53aa5..26845ec 100644
+index 0d53aa5..20095fb 100644
 --- a/engine/rendering/vector.c
 +++ b/engine/rendering/vector.c
-@@ -1846,7 +1846,30 @@ static void render_tape(const float* ops,
+@@ -1846,7 +1846,34 @@ static void render_tape(const float* ops,
      }
  }
  
@@ -1069,6 +1353,10 @@ index 0d53aa5..26845ec 100644
 +        op.h = clipy1 - clipy0;
 +        op.pos[0] = px;
 +        op.pos[1] = py;
++        op.bounds[0] = op.x;
++        op.bounds[1] = op.y;
++        op.bounds[2] = op.w;
++        op.bounds[3] = op.h;
 +        if (er_canvas_offer(&op))
 +            return;
 +        vector_render_sw(ops, n_ops, paints, n_paints, grads, n_grads, px, py, clipx0, clipy0, clipx1, clipy1);
@@ -1082,7 +1370,7 @@ index 0d53aa5..26845ec 100644
                        int n_ops,
                        const ERVectorPaint* paints,
                        int n_paints,
-@@ -1963,7 +1986,31 @@ static void render_slot(int slot, int px, int py, int clipx0, int clipy0, int cl
+@@ -1963,7 +1990,35 @@ static void render_slot(int slot, int px, int py, int clipx0, int clipy0, int cl
  #endif
  }
  
@@ -1101,6 +1389,10 @@ index 0d53aa5..26845ec 100644
 +        op.h = clipy1 - clipy0;
 +        op.pos[0] = px;
 +        op.pos[1] = py;
++        op.bounds[0] = op.x;
++        op.bounds[1] = op.y;
++        op.bounds[2] = op.w;
++        op.bounds[3] = op.h;
 +        if (er_canvas_offer(&op))
 +            return;
 +        vector_render_slot_sw(slot, px, py, clipx0, clipy0, clipx1, clipy1);
@@ -1115,10 +1407,42 @@ index 0d53aa5..26845ec 100644
      /* The working state above and the edge cache are shared by every render worker: a parallel
       * commit rasterizes vectors one worker at a time. */
 diff --git a/engine/text/text_renderer.c b/engine/text/text_renderer.c
-index 3d151c8..37fb781 100644
+index 3d151c8..94047e5 100644
 --- a/engine/text/text_renderer.c
 +++ b/engine/text/text_renderer.c
-@@ -528,7 +528,33 @@ outer_break:
+@@ -376,6 +376,31 @@ static void draw_cp(
+     const BitmapFont* font, uint32_t cp, int cursor_x, int cursor_y, const ERRect* clip, uint32_t color, bool italic)
+ {
+     const GlyphInfo* g = font_glyph(font, cp);
++    if (g_er_canvas && g->width && g->height)
++    {
++        ERCanvasOp op = {0};
++        op.kind = ER_CANVAS_GLYPH;
++        op.buffer = font->bitmap + g->bitmap_offset;
++        op.x = cursor_x + g->x_offset;
++        op.y = cursor_y + g->y_offset;
++        op.w = g->width;
++        op.h = g->height;
++        op.argb = color;
++        op.mode = font->format;
++        op.area[0] = clip->x;
++        op.area[1] = clip->y;
++        op.area[2] = clip->w;
++        op.area[3] = clip->h;
++        op.f[0] = italic ? 1.0f : 0.0f;
++        if (er_canvas_offer(&op))
++            return;
++        if (font->format != ERUI_FONT_FMT_1BIT)
++            draw_glyph_aa(g, font->bitmap, font->format, cursor_x, cursor_y, clip, color, italic);
++        else
++            draw_glyph(g, font->bitmap, cursor_x, cursor_y, clip, color, italic);
++        er_canvas_done();
++        return;
++    }
+     if (font->format != ERUI_FONT_FMT_1BIT)
+         draw_glyph_aa(g, font->bitmap, font->format, cursor_x, cursor_y, clip, color, italic);
+     else
+@@ -528,7 +553,33 @@ outer_break:
   - Functions: Public
   ---------------------------------------------------------------------------------------------------------------------*/
  

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 half144 and PS5 React contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Additional attribution term: see LICENSE-ATTRIBUTION.
 #include "canvas_trace.hpp"
 
 #include <array>
@@ -17,7 +20,7 @@ constexpr const char* kNames[ER_CANVAS_OP_COUNT] = {
     "fill", "rrect", "rrect-bordered", "rrect-ring", "rrect-ring-edges", "gradient", "shadow", "border-sweep",
     "border-conic", "border-radial", "arc-sector", "vector", "vector-slot", "text", "image", "clear",
     "clip-rect", "clip-rrect", "clip-reset", "clip-pop", "alpha", "blend", "group-begin", "group-end",
-    "group-draw", "group-xform", "unhooked", "move"};
+    "group-draw", "group-xform", "group-keep", "unhooked", "move", "glyph", "image-region", "pixels"};
 
 std::mutex lock;
 FILE* out = nullptr;
@@ -79,9 +82,9 @@ void append(const ERCanvasOp& op) {
   pending.push_back('\n');
 }
 
-bool watch(const ERCanvasOp* op, void*) {
+int watch(const ERCanvasOp* op, void*) {
   std::lock_guard<std::mutex> guard(lock);
-  if (op->kind >= ER_CANVAS_OP_COUNT) return false;
+  if (op->kind >= ER_CANVAS_OP_COUNT) return ER_CANVAS_PASS;
   (op->depth == 0 ? counts : nested)[op->kind]++;
   if (op->kind == ER_CANVAS_UNHOOKED && unhooked_sampled < 20) {
     char sample[96];
@@ -90,7 +93,7 @@ bool watch(const ERCanvasOp* op, void*) {
     unhooked_sampled++;
   }
   append(*op);
-  return false;
+  return ER_CANVAS_PASS;
 }
 
 }  // namespace
@@ -108,7 +111,6 @@ bool start(const char* path, int render_workers) {
 void commit_begin() {
   std::lock_guard<std::mutex> guard(lock);
   commit_index++;
-  pending.clear();
 }
 
 void commit_end() {

@@ -161,6 +161,9 @@ The software renderer still owns the pixels. A future GPU backend can preserve
 the application API but is not implemented here. Its seam is the engine's canvas
 (`er_canvas.h`): every drawing primitive, clip, offscreen group and transform is
 offered to an installed canvas before it is rasterized, and one that takes an op
-skips the software drawing. `PS5_REACT_CANVAS_TRACE=<file>` lists what the desktop
-preview draws per commit, run with `PS5_REACT_RENDER_WORKERS=1` for drawing order. No part depends on RNPS,
+skips the software drawing; one that answers capture gets the op's pixels, drawn on
+the CPU into a buffer of their own. `PS5_REACT_CANVAS_TRACE=<file>` lists what the desktop
+preview draws per commit, run with `PS5_REACT_RENDER_WORKERS=1` for drawing order.
+`PS5_REACT_GPU_MIRROR=1` draws every commit again with OpenGL from those ops and compares
+the two pictures at each `shot:`. No part depends on RNPS,
 Sony bundle signature bypasses, or changing the system home screen.
