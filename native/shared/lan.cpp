@@ -17,6 +17,9 @@
 #include <poll.h>
 #include <sys/socket.h>
 #include <unistd.h>
+#ifdef __SWITCH__
+#include <switch.h>
+#endif
 
 namespace lan {
 namespace {
@@ -38,6 +41,19 @@ std::mutex mutex;
 std::map<std::uint32_t, std::shared_ptr<Task>> tasks;
 std::uint32_t next_id = 1;
 
+// Where a query goes: everyone on the link. The Switch's socket service drops packets to
+// 255.255.255.255, so there it is the subnet's own broadcast address, from the network settings.
+in_addr_t broadcast_address() {
+#ifdef __SWITCH__
+  u32 address = 0, mask = 0, gateway = 0, dns1 = 0, dns2 = 0;
+  const bool known = R_SUCCEEDED(nifmInitialize(NifmServiceType_User)) &&
+                     R_SUCCEEDED(nifmGetCurrentIpConfigInfo(&address, &mask, &gateway, &dns1, &dns2)) && mask;
+  nifmExit();
+  if (known) return address | ~mask;
+#endif
+  return htonl(INADDR_BROADCAST);
+}
+
 void run(Task& task) {
   name_thread("lan-query");
   Snapshot& out = task.result;
@@ -51,7 +67,7 @@ void run(Task& task) {
   sockaddr_in to{};
   to.sin_family = AF_INET;
   to.sin_port = htons(task.port);
-  to.sin_addr.s_addr = htonl(INADDR_BROADCAST);
+  to.sin_addr.s_addr = broadcast_address();
   if (setsockopt(fd, SOL_SOCKET, SO_BROADCAST, &on, sizeof on) != 0 ||
       sendto(fd, task.message.data(), task.message.size(), 0, reinterpret_cast<const sockaddr*>(&to), sizeof to) < 0) {
     out.state = "failed";

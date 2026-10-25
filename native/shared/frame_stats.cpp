@@ -32,10 +32,15 @@ std::uint64_t process_cpu_us() {
   return us(usage.ru_utime) + us(usage.ru_stime);
 }
 
-std::uint64_t cpu_us(clockid_t clock) {
+// The calling thread's CPU time; 0 where the system does not keep it (the Switch's newlib).
+std::uint64_t thread_cpu_us() {
+#ifdef CLOCK_THREAD_CPUTIME_ID
   timespec t{};
-  if (clock_gettime(clock, &t)) return 0;
+  if (clock_gettime(CLOCK_THREAD_CPUTIME_ID, &t)) return 0;
   return static_cast<std::uint64_t>(t.tv_sec) * 1000000 + static_cast<std::uint64_t>(t.tv_nsec) / 1000;
+#else
+  return 0;
+#endif
 }
 } // namespace
 
@@ -50,10 +55,10 @@ const char* FrameStats::start_frame(std::int64_t now_us) {
   } else {
     window_start_ = now_us;
     process_cpu_start_ = process_cpu_us();
-    thread_cpu_start_ = cpu_us(CLOCK_THREAD_CPUTIME_ID);
+    thread_cpu_start_ = thread_cpu_us();
   }
   frame_start_ = mark_ = now_us;
-  thread_cpu_mark_ = cpu_us(CLOCK_THREAD_CPUTIME_ID);
+  thread_cpu_mark_ = thread_cpu_us();
 
   const std::int64_t elapsed = now_us - window_start_;
   if (frames_ && elapsed >= window_us) {
@@ -117,7 +122,7 @@ const char* FrameStats::start_frame(std::int64_t now_us) {
 void FrameStats::lap(Phase phase, std::int64_t now_us) {
   phase_sum_[phase] += static_cast<std::uint64_t>(std::max<std::int64_t>(now_us - mark_, 0));
   mark_ = now_us;
-  const std::uint64_t thread_cpu = cpu_us(CLOCK_THREAD_CPUTIME_ID);
+  const std::uint64_t thread_cpu = thread_cpu_us();
   thread_cpu_sum_[phase] += thread_cpu > thread_cpu_mark_ ? thread_cpu - thread_cpu_mark_ : 0;
   thread_cpu_mark_ = thread_cpu;
 }

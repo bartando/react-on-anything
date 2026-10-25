@@ -64,14 +64,14 @@ void* stb_realloc(void* address, std::size_t size) {
 #define STBI_ONLY_PNG
 #define STB_IMAGE_STATIC
 #define STB_IMAGE_IMPLEMENTATION
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wunused-function"
-#pragma clang diagnostic ignored "-Wsign-compare"
-#pragma clang diagnostic ignored "-Wunused-parameter"
-#pragma clang diagnostic ignored "-Wmissing-field-initializers"
-#pragma clang diagnostic ignored "-Wimplicit-fallthrough"
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-function"
+#pragma GCC diagnostic ignored "-Wsign-compare"
+#pragma GCC diagnostic ignored "-Wunused-parameter"
+#pragma GCC diagnostic ignored "-Wmissing-field-initializers"
+#pragma GCC diagnostic ignored "-Wimplicit-fallthrough"
 #include "stb_image.h"
-#pragma clang diagnostic pop
+#pragma GCC diagnostic pop
 
 namespace images {
 namespace {

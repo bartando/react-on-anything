@@ -3,13 +3,13 @@
 // Additional attribution term: see LICENSE-ATTRIBUTION.
 #pragma once
 
-// The GL of each host: 4.1 core on macOS and the PS5, OpenGL ES 3.2 on Android. Shaders start with
+// The GL of each host: 4.1 core on macOS and the PS5, OpenGL ES 3.2 on Android and the Switch (Mesa). Shaders start with
 // GLSL_VERSION and are written in the subset both dialects share.
 #if defined(__APPLE__)
 #include <OpenGL/gl3.h>
 #elif defined(PROSPERO)
 #include <GL/glcorearb.h>
-#elif defined(__ANDROID__)
+#elif defined(__ANDROID__) || defined(__SWITCH__)
 #include <GLES3/gl32.h>
 #else
 #define GL_GLEXT_PROTOTYPES
@@ -19,7 +19,7 @@
 #include <cstddef>
 #include <cstdint>
 
-#ifdef __ANDROID__
+#if defined(__ANDROID__) || defined(__SWITCH__)
 #define GL_ES_HOST 1
 #define GLSL_VERSION                                                                                         \
   "#version 320 es\nprecision highp float;\nprecision highp int;\nprecision highp sampler2D;\n"            \

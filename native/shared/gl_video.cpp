@@ -7,6 +7,12 @@
 #include <OpenGL/gl3.h>
 #elif defined(PROSPERO)
 #include <GL/glcorearb.h>
+#elif defined(__SWITCH__)
+#include <GLES3/gl32.h>
+#include <GLES2/gl2ext.h>
+// 16-bit normalized planes come from EXT_texture_norm16 on GLES, with desktop GL's values.
+#define GL_R16 GL_R16_EXT
+#define GL_RG16 GL_RG16_EXT
 #else
 #define GL_GLEXT_PROTOTYPES
 #include <SDL2/SDL_opengl.h>
