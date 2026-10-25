@@ -22,7 +22,9 @@ On the device, under `/sdcard/Android/data/<package>/files`:
 | `sandbox/` | `/app0`, `/download0`, `/temp0` resolve here |
 | `options.env` | `KEY=VALUE` lines set before boot (`--options 'A=1;B=2'`) |
 
-Logs go to logcat under the tag `ps5-react`. Video plays through the system's MediaPlayer
-(`native/android/media_player.hpp`), which decodes in hardware and outputs the sound itself; it has no
-subtitles or upscalers yet. Archives (libarchive) are not there yet; their API refuses each request. The system's CA store is gathered into one file for curl
+Logs go to logcat under the tag `ps5-react`. Video plays through the FFmpeg player the other hosts
+use, so it opens what they open (fMP4 HLS included, which the system's MediaPlayer cannot) and has
+the same audio tracks and subtitles. The picture decodes in MediaCodec (`native/android/media_codec.hpp`)
+straight into a SurfaceTexture the presenter draws; FFmpeg decodes the sound for the mixer. A codec
+MediaCodec refuses does not play: there is no software path for the picture, nor upscalers. Archives (libarchive) are not there yet; their API refuses each request. The system's CA store is gathered into one file for curl
 at startup.

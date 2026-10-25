@@ -8,7 +8,7 @@ the app's bundle and fonts, and starts it.
 
 The app is laid out at 1920x1080 whatever its app.json says: Android TV apps draw at 1080p and the
 system scales them to the TV. Needs the Android SDK (ANDROID_HOME, default ~/Library/Android/sdk) with an
-NDK and build-tools. curl and OpenSSL are built for the ABI once, from pinned sources."""
+NDK and build-tools. curl, OpenSSL and FFmpeg are built for the ABI once, from pinned sources."""
 import argparse
 import os
 from pathlib import Path
@@ -19,6 +19,7 @@ import zipfile
 
 from common import ROOT, app_config, bundle, dependency, fetch, run, stb_image
 from text_fonts import harfbuzz, sheenbidi
+import ffmpeg
 
 ABI = "armeabi-v7a"
 API = 30
@@ -105,6 +106,7 @@ def build(app):
     run(["cmake", "-S", ROOT / "native/android", "-B", output / "native", "-G", "Ninja",
          f"-DCMAKE_TOOLCHAIN_FILE={ndk}/build/cmake/android.toolchain.cmake", f"-DANDROID_ABI={ABI}",
          f"-DANDROID_PLATFORM=android-{API}", "-DCMAKE_BUILD_TYPE=Release", f"-DANDROID_DEPS={network_libraries(ndk)}",
+         f"-DFFMPEG_PREFIX={ffmpeg.android(ndk, ABI, API, network_libraries(ndk))}",
          f"-DER_ROOT={er}", f"-DHUI_ROOT={dependency('platform')}",
          f"-DFETCHCONTENT_SOURCE_DIR_QUICKJS={dependency('quickjsSource')}", f"-DAPP_GENERATED={generated}",
          f"-DAPP_LAYOUT={layout}", f"-DAPP_LAYOUT_WIDTH={WIDTH}", f"-DAPP_LAYOUT_HEIGHT={HEIGHT}",

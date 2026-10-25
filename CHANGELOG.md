@@ -7,10 +7,13 @@
   at 1080p and 55 to 59 fps on its home screen, on under one CPU core; most of each frame is the
   renderer issuing its draws.
 
-- Video plays on Android through the system's MediaPlayer, which decodes in hardware and outputs the
-  sound; `native/android/media_player.hpp` is the same `video::Player` the FFmpeg player is, so the
-  `video` API is shared. Its pictures come as a SurfaceTexture the presenter draws in the video's place.
-  No subtitles or upscalers there yet.
+- Video plays on Android through the FFmpeg player, built for 32-bit ARM by `tools/ffmpeg.py`, with the
+  picture decoded in hardware by MediaCodec (`native/android/media_codec.hpp`) into a SurfaceTexture the
+  presenter draws in the video's place. The system's MediaPlayer, tried first, cannot open HLS with
+  fMP4 segments. Audio tracks and subtitles work as on the other hosts; upscalers are not there.
+
+- The GPU renderer sets a uniform, program, blend function, scissor or texture only when it changes:
+  the Shield's driver charges for every call. The pixels are the same.
 
 - The GPU renderer and the presenter include `gl_api.hpp`, which picks the platform's GL and GLSL
   dialect: their shaders now compile as GLSL 4.10 and GLSL ES 3.20.

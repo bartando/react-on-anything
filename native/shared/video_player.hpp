@@ -3,7 +3,7 @@
 // Additional attribution term: see LICENSE-ATTRIBUTION.
 // Video playback: one Player per <Video>. FFmpeg demuxes on one thread, video and audio decode on two
 // more; the render thread picks the frame due at each present by the audio clock (gl_video.hpp draws it)
-// and the sound mixer plays the audio. Android has a Player of its own over the system's MediaPlayer.
+// and the sound mixer plays the audio.
 #pragma once
 
 #include "video_frame.hpp"
@@ -71,7 +71,6 @@ struct Options {
   std::vector<std::string> headers; // "Name: value" request headers for http(s)
 };
 
-#ifndef __ANDROID__
 class AudioRing;
 
 class Player {
@@ -106,8 +105,9 @@ public:
   // routes audio and settles the state.
   // `frame_us` is the display's frame interval: a picture is due within half of it.
   void update(std::int64_t now_us, std::int64_t frame_us);
-  // The frame due now, or null before the first; valid until the next update().
-  const Frame* frame() const { return shown_.planes[0] ? &shown_ : nullptr; }
+  // The frame due now, or null before the first; valid until the next update(). A picture decoded into
+  // a texture (Android's) has no planes, only its owner.
+  const Frame* frame() const { return shown_.planes[0] || shown_.owner ? &shown_ : nullptr; }
   Status status() const;
 
 private:
@@ -185,11 +185,5 @@ private:
 
   std::thread demux_thread_, video_thread_, audio_thread_;
 };
-#endif
 
 } // namespace video
-
-#ifdef __ANDROID__
-// Android plays through the platform's MediaPlayer behind the same interface (native/android).
-#include "media_player.hpp"
-#endif

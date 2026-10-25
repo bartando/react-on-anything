@@ -41,7 +41,12 @@ constexpr auto kReconnectInterval = std::chrono::seconds(2);
 constexpr auto kReconnectFor = std::chrono::minutes(5);
 // Decoded pictures queued ahead of the one shown: enough to ride out a 4K keyframe that holds the
 // hardware decoder for several display frames.
+#ifdef __ANDROID__
+// MediaCodec's pictures are its own output buffers, a handful per codec: holding many stalls it.
+constexpr std::size_t kMaxFrames = 4;
+#else
 constexpr std::size_t kMaxFrames = 8;
+#endif
 // Audio buffered before playback starts or resumes after a seek.
 constexpr std::int64_t kAudioPrerollUs = 120'000;
 // Late frames are skipped while a newer one is already due.
