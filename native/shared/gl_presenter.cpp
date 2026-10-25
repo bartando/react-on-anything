@@ -4,14 +4,7 @@
 #include "gl_presenter.hpp"
 #include "video_api.hpp"
 
-#ifdef __APPLE__
-#include <OpenGL/gl3.h>
-#elif defined(PROSPERO)
-#include <GL/glcorearb.h>
-#else
-#define GL_GLEXT_PROTOTYPES
-#include <SDL2/SDL_opengl.h>
-#endif
+#include "gl_api.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -20,7 +13,7 @@
 
 namespace {
 // Oversized triangle: one draw, no vertex buffer, no seam through the image.
-const char* vertex_source = R"(#version 410 core
+const char* vertex_source = GLSL_VERSION R"(
 void main() {
   vec2 p = vec2(float((gl_VertexID << 1) & 2), float(gl_VertexID & 2));
   gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0);
@@ -29,7 +22,7 @@ void main() {
 // Copies a rect staged in a buffer texture, `width` texels a row from `first`, into the bound target
 // texture, whose rows are image rows.
 // The buffer holds 0xAARRGGBB words, which little-endian storage puts in B,G,R,A order.
-const char* stage_fragment_source = R"(#version 410 core
+const char* stage_fragment_source = GLSL_VERSION R"(
 uniform samplerBuffer rows;
 uniform int width;
 uniform ivec2 first;
@@ -44,7 +37,7 @@ void main() {
 // (x0 y0 x1 y1), their src rects image pixels, their radii (tl tr br bl) the corner squares left to the
 // framebuffer. The first pass composites over black, opaque; more layers take earlier passes, blended
 // under the last.
-const char* composite_fragment_source = R"(#version 410 core
+const char* composite_fragment_source = GLSL_VERSION R"(
 uniform sampler2D frame;
 uniform sampler2D images[4];
 uniform int layer_count;
@@ -264,8 +257,13 @@ void GlPresenter::upload_rect(unsigned int target, unsigned int fbo, int width, 
     glBindTexture(GL_TEXTURE_2D, target);
     glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
     glPixelStorei(GL_UNPACK_ROW_LENGTH, width);
+#if GL_ES_HOST
+    // GLES 3.2 always has buffer textures; without them there is no BGRA upload either.
+    (void)pixels;
+#else
     glTexSubImage2D(GL_TEXTURE_2D, 0, rect.x, rect.y, rect.w, rect.h, GL_BGRA, GL_UNSIGNED_BYTE,
                     pixels + static_cast<std::size_t>(rect.y) * width + rect.x);
+#endif
     glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
     return;
   }
@@ -482,7 +480,9 @@ bool GlPresenter::present(int sw, int sh) {
   } video_done{video_};
   ++presents_;
   glDisable(GL_DEPTH_TEST);
+#ifdef GL_FRAMEBUFFER_SRGB
   glDisable(GL_FRAMEBUFFER_SRGB);
+#endif
   if (sw == width_ && sh == height_) {
     composite(0, 0, sw, sh);
   } else {
@@ -523,7 +523,9 @@ void GlPresenter::composite_to(unsigned int fbo, unsigned int frame) {
   target_fbo_ = fbo;
   frame_override_ = frame;
   glDisable(GL_DEPTH_TEST);
+#ifdef GL_FRAMEBUFFER_SRGB
   glDisable(GL_FRAMEBUFFER_SRGB);
+#endif
   composite(0, 0, width_, height_);
   target_fbo_ = frame_override_ = 0;
   layers_ = shown;

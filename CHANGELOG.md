@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased — an Android TV host
+
+- `native/android` runs an app on Android TV through the GPU renderer and OpenGL ES 3.2, and
+  `tools/android.py` builds, installs and starts it (docs/ANDROID.md). Anyfin runs on an NVIDIA SHIELD
+  at 1080p and 55 to 59 fps on its home screen, on under one CPU core; most of each frame is the
+  renderer issuing its draws.
+
+- The GPU renderer and the presenter include `gl_api.hpp`, which picks the platform's GL and GLSL
+  dialect: their shaders now compile as GLSL 4.10 and GLSL ES 3.20.
+
 ## Unreleased — the desktop preview can draw with the GPU
 
 - `PS5_REACT_GPU=1` draws the preview with OpenGL instead of the software rasterizer: the engine skips

@@ -5,14 +5,7 @@
 
 #include "gl_presenter.hpp"
 
-#ifdef __APPLE__
-#include <OpenGL/gl3.h>
-#elif defined(PROSPERO)
-#include <GL/glcorearb.h>
-#else
-#define GL_GLEXT_PROTOTYPES
-#include <SDL2/SDL_opengl.h>
-#endif
+#include "gl_api.hpp"
 
 extern "C" {
 #include "er_canvas.h"
@@ -59,7 +52,7 @@ float clipped(vec2 c) {
 }
 )";
 
-constexpr const char* kVertex = R"(#version 410 core
+constexpr const char* kVertex = GLSL_VERSION R"(
 uniform vec2 u_size;
 uniform vec2 u_origin;
 uniform vec4 u_quad;
@@ -299,7 +292,7 @@ GLuint compile(GLenum type, const std::string& source) {
 
 GLuint link(const char* fragment_body) {
   GLuint vertex = compile(GL_VERTEX_SHADER, kVertex);
-  GLuint fragment = compile(GL_FRAGMENT_SHADER, std::string("#version 410 core\n") + kCoverage + fragment_body);
+  GLuint fragment = compile(GL_FRAGMENT_SHADER, std::string(GLSL_VERSION) + kCoverage + fragment_body);
   if (!vertex || !fragment) return 0;
   GLuint program = glCreateProgram();
   glAttachShader(program, vertex);
@@ -584,10 +577,10 @@ const GpuRenderer::Image& GpuRenderer::image(const void* pixels, const char* nam
   glBindTexture(GL_TEXTURE_2D, img.texture);
   if (format == ER_IMG_RGB565) {
     glPixelStorei(GL_UNPACK_ALIGNMENT, 2);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGB, GL_UNSIGNED_SHORT_5_6_5, pixels);
+    gl::tex_image_rgb565(w, h, pixels);
   } else {
     glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_BGRA, GL_UNSIGNED_INT_8_8_8_8_REV, pixels);
+    gl::tex_image_argb(w, h, pixels);
   }
   glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
@@ -1001,8 +994,7 @@ void GpuRenderer::draw_ops() {
         glBindTexture(GL_TEXTURE_2D, pixels_);
         stats_.pixel_ops++;
         stats_.pixel_bytes += static_cast<std::uint64_t>(op.w) * op.h * 4;
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, op.w, op.h, 0, GL_BGRA, GL_UNSIGNED_INT_8_8_8_8_REV,
-                     recorded.pixels.data());
+        gl::tex_image_argb(op.w, op.h, recorded.pixels.data());
         texture_draw(pixels_, 0, op.x, op.y, op.w, op.h, static_cast<float>(op.x), static_cast<float>(op.y), op.w,
                      op.h, nullptr, 1.0f);
         break;
@@ -1070,7 +1062,7 @@ void read_target(unsigned int fbo, int width, int height, bool flip, std::vector
   argb.resize(static_cast<std::size_t>(width) * height);
   glBindFramebuffer(GL_FRAMEBUFFER, fbo);
   glPixelStorei(GL_PACK_ALIGNMENT, 4);
-  glReadPixels(0, 0, width, height, GL_BGRA, GL_UNSIGNED_INT_8_8_8_8_REV, argb.data());
+  gl::read_argb(0, 0, width, height, argb.data());
   glBindFramebuffer(GL_FRAMEBUFFER, 0);
   if (flip)
     for (int y = 0; y < height / 2; y++)
