@@ -26,7 +26,7 @@ add_library(android_native_app_glue STATIC "${ANDROID_NDK}/sources/android/nativ
 target_include_directories(android_native_app_glue PUBLIC "${ANDROID_NDK}/sources/android/native_app_glue")
 
 set(SHARED ../shared)
-add_library(main SHARED host.cpp host_platform.cpp network_platform.cpp unavailable.cpp java.cpp media_codec.cpp gl_video.cpp
+add_library(main SHARED host.cpp host_platform.cpp network_platform.cpp unavailable.cpp java.cpp media_codec.cpp gl_video.cpp image_decoder.cpp
   ../desktop/package_installer.cpp ../desktop/browser_capture.cpp
   ${SHARED}/network.cpp ${SHARED}/network_api.cpp
   ${SHARED}/package_api.cpp ${SHARED}/browser_capture_api.cpp ${SHARED}/lan.cpp ${SHARED}/lan_api.cpp
@@ -49,4 +49,4 @@ target_link_libraries(main PRIVATE android_native_app_glue er-bridge-quickjs er-
   "${FFMPEG_PREFIX}/lib/libavformat.a" "${FFMPEG_PREFIX}/lib/libavcodec.a" "${FFMPEG_PREFIX}/lib/libswscale.a"
   "${FFMPEG_PREFIX}/lib/libswresample.a" "${FFMPEG_PREFIX}/lib/libavutil.a"
   "${ANDROID_DEPS}/lib/libcurl.a" "${ANDROID_DEPS}/lib/libssl.a" "${ANDROID_DEPS}/lib/libcrypto.a"
-  android log EGL GLESv3 aaudio mediandk z)
+  android log EGL GLESv3 aaudio mediandk jnigraphics z)

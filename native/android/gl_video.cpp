@@ -10,6 +10,7 @@
 #include "host_platform.hpp"
 #include "java.hpp"
 #include "media_codec.hpp"
+#include "video_api.hpp"
 
 #include <algorithm>
 #include <cstdio>
@@ -154,6 +155,18 @@ void show(std::uint64_t id, const video::Frame& frame, const ARect& source, cons
   layer.destination = destination;
 }
 } // namespace
+
+int video::refresh_layers() {
+  int shown = 0;
+  for (Layer& layer : layers) {
+    const video::Frame* frame = video_layers::frame_of(layer.id);
+    if (!layer.control || !frame || !frame->owner || frame->owner == layer.showing) continue;
+    show(layer.id, *frame, layer.source, layer.destination);
+    layer.drawn = false; // the presenter's next frame decides whether it stays
+    ++shown;
+  }
+  return shown;
+}
 
 bool GlVideo::init(bool) {
   if (program) return true;

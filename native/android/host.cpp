@@ -11,6 +11,7 @@
 // with the software rasterizer instead, PS5_REACT_INPUT_SCRIPT runs a script as on the desktop.
 #include "host_platform.hpp"
 #include "java.hpp"
+#include "media_codec.hpp"
 #include "network.hpp"
 #include "image_loader.hpp"
 #include "archives.hpp"
@@ -166,6 +167,11 @@ struct Host {
   GpuRenderer gpu;
   FrameStats stats;
   GcScheduler gc_scheduler{now_us};
+  // The render thread stops for a collection (about 200ms on the Shield): the videos keep playing.
+  static int video_during_collection(std::int64_t now) {
+    video_layers::advance(now, 16667);
+    return video::refresh_layers();
+  }
   InputScript script;
   VirtualPad virtual_pad;
   std::string files;
@@ -554,6 +560,7 @@ void android_main(android_app* app) {
   host.app = app;
   host.files = app->activity->externalDataPath ? app->activity->externalDataPath : app->activity->internalDataPath;
   app->userData = &host;
+  host.gc_scheduler.during_collection(Host::video_during_collection);
   app->onAppCmd = on_command;
   app->onInputEvent = on_input;
   ANativeActivity_setWindowFlags(app->activity, AWINDOW_FLAG_KEEP_SCREEN_ON | AWINDOW_FLAG_FULLSCREEN, 0);

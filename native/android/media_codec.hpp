@@ -13,6 +13,7 @@
 #include <media/NdkImageReader.h>
 #include <media/NdkMediaCodec.h>
 
+#include <atomic>
 #include <cstdint>
 #include <memory>
 
@@ -38,6 +39,7 @@ struct CodecOutput {
   AMediaCodec* codec = nullptr;
   AImageReader* reader = nullptr;
   LayerColor color;
+  std::atomic<int> held{0}; // images taken from the reader and not yet given back
 };
 
 // One decoded picture, held until it is dropped or the layer has moved past it.
@@ -48,8 +50,15 @@ struct LayerFrame {
   int width = 0, height = 0; // the picture in the buffer, cropped
 
   ~LayerFrame() {
-    if (image) AImage_delete(image);
+    if (!image) return;
+    AImage_delete(image);
+    --output->held;
   }
 };
+
+// Puts on each video's layer the frame its player shows now, where the presenter last placed it: while
+// the render thread is held up (js_heap.hpp's during_collection), not otherwise.
+// Returns how many layers got a new frame.
+int refresh_layers();
 
 } // namespace video

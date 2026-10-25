@@ -4,7 +4,10 @@
 #include "js_heap.hpp"
 
 #include <algorithm>
+#include <atomic>
+#include <chrono>
 #include <cstdio>
+#include <thread>
 
 extern "C" {
 #include "er_js_alloc.h"
@@ -82,12 +85,26 @@ const char* GcScheduler::frame(JSRuntime* runtime, std::int64_t now_us, std::siz
   if (wait_for_still_ && still_frames_ < kStillFrames && garbage < room / 4 * 3) return nullptr;
   const std::size_t before = live;
   const std::int64_t start = clock_();
+  std::atomic<bool> collected{false};
+  int moved = 0;
+  std::thread standing_in;
+  if (tick_)
+    standing_in = std::thread([&] {
+      while (!collected) {
+        moved += tick_(clock_());
+        std::this_thread::sleep_for(std::chrono::milliseconds(4));
+      }
+    });
   JS_RunGC(runtime);
+  collected = true;
+  if (standing_in.joinable()) standing_in.join();
   live_after_gc_ = live;
   // QuickJS's own rule after a collection, with the room's floor.
   threshold_ = std::min(live + std::max(live / 2, kMinRoom), kCeiling);
   JS_SetGCThreshold(runtime, threshold_);
-  std::snprintf(line_, sizeof line_, "gc: idle, %.1f ms, %.1f -> %.1f MiB live", (clock_() - start) / 1000.0,
-                mib(before), mib(live));
+  const int length = std::snprintf(line_, sizeof line_, "gc: idle, %.1f ms, %.1f -> %.1f MiB live",
+                                   (clock_() - start) / 1000.0, mib(before), mib(live));
+  if (tick_ && length > 0 && static_cast<std::size_t>(length) < sizeof line_)
+    std::snprintf(line_ + length, sizeof line_ - length, ", %d moved meanwhile", moved);
   return line_;
 }

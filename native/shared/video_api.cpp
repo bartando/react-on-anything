@@ -478,6 +478,16 @@ void update(std::int64_t now_us, std::int64_t frame_us) {
   for (Entry& entry : players) entry.player->update(now_us, frame_us);
 }
 
+void advance(std::int64_t now_us, std::int64_t frame_us) {
+  for (Entry& entry : players) entry.player->update(now_us, frame_us);
+}
+
+const video::Frame* frame_of(std::uint64_t id) {
+  for (const Entry& entry : players)
+    if (entry.id == id) return entry.player->frame();
+  return nullptr;
+}
+
 std::string summary() {
   std::string out;
   for (const Entry& entry : players) {
@@ -527,6 +537,8 @@ namespace video_layers {
 bool find(const char*, Layer&) { return false; }
 bool sample(const char*, int, int, int, int, int, int, unsigned*) { return false; }
 void update(std::int64_t, std::int64_t) {}
+void advance(std::int64_t, std::int64_t) {}
+const video::Frame* frame_of(std::uint64_t) { return nullptr; }
 void stop() {}
 std::string summary() { return {}; }
 } // namespace video_layers

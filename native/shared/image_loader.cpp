@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Additional attribution term: see LICENSE-ATTRIBUTION.
 #include "image_loader.hpp"
+#include "image_decode_platform.hpp"
 #include "thread_name.hpp"
 #include "network.hpp"
 #ifdef PROSPERO
@@ -381,6 +382,21 @@ bool decode(Entry& entry) {
     entry.body.reset();
     entry.error = message(entry, "out of memory to decode (heap near full)");
     return false;
+  }
+  // The host's decoder may shrink while decoding: to the size the box shows the crop at, at least.
+  const int min_width = (p.out_width * width + p.width - 1) / p.width;
+  const int min_height = (p.out_height * height + p.height - 1) / p.height;
+  int decoded_width = 0, decoded_height = 0;
+  if (unsigned char* fast = platform_decode_image(bytes, static_cast<std::size_t>(size), min_width, min_height,
+                                                  decoded_width, decoded_height)) {
+    entry.body.reset();
+    const Plan scaled = plan(decoded_width, decoded_height, entry.box_width, entry.box_height, entry.fit);
+    const bool resampled = resample(fast, decoded_width, 4, scaled, entry);
+    ++counters.decodes;
+    std::free(fast);
+    if (!resampled) { entry.error = message(entry, "out of memory for decoded pixels"); return false; }
+    entry.color = vivid_color(entry.pixels, entry.width, entry.height);
+    return true;
   }
   stbi_uc* source = stbi_load_from_memory(bytes, size, &width, &height, &components, channels);
   entry.body.reset();

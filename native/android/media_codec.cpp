@@ -216,8 +216,14 @@ private:
                                         0) == AMEDIA_OK;
   }
 
-  // Takes one finished picture, if the codec has one within `timeout_us`.
+  // Takes one finished picture, if the codec has one within `timeout_us`. With the reader's images all
+  // out (queued, showing or just shown) it leaves the picture in the codec, which then stops taking
+  // input until the player lets one go: taken anyway, the reader would refuse it and the frame be lost.
   void drain(std::int64_t timeout_us) {
+    if (output_->held >= kImages - 1) {
+      if (timeout_us) std::this_thread::sleep_for(std::chrono::microseconds(timeout_us));
+      return;
+    }
     AMediaCodecBufferInfo info{};
     const ssize_t index = AMediaCodec_dequeueOutputBuffer(output_->codec, &info, timeout_us);
     if (index < 0) return; // nothing yet, or a format or buffer change the image's crop covers
@@ -230,9 +236,10 @@ private:
     const std::int64_t stamp = ++rendered_;
     AMediaCodec_releaseOutputBufferAtTime(output_->codec, static_cast<std::size_t>(index), stamp);
     AImage* image = nullptr;
+    media_status_t taken = AMEDIA_OK;
     for (int tries = 0; tries < 200 && !image; ++tries) {
       AImage* next = nullptr;
-      const media_status_t taken = AImageReader_acquireNextImage(output_->reader, &next);
+      taken = AImageReader_acquireNextImage(output_->reader, &next);
       if (taken == AMEDIA_OK) {
         std::int64_t at = 0;
         AImage_getTimestamp(next, &at);
@@ -244,9 +251,11 @@ private:
       std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
     if (!image) {
-      std::fprintf(stderr, "[video] MediaCodec's picture did not reach the reader\n");
+      std::fprintf(stderr, "[video] MediaCodec's picture did not reach the reader (%d, %d held)\n", taken,
+                   output_->held.load());
       return;
     }
+    ++output_->held;
     auto picture = std::make_shared<video::LayerFrame>();
     picture->output = output_;
     picture->image = image;

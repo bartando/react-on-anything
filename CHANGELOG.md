@@ -14,6 +14,11 @@
   FFmpeg 7.1's filter, which put a file header's stale parameter sets after a keyframe's own. The system's MediaPlayer, tried first, cannot open HLS with
   fMP4 segments. Audio tracks and subtitles work as on the other hosts; upscalers are not there.
 
+- On Android the video decoder waits for the reader to give an image back instead of losing the frame,
+  a JS collection (about 150ms on the Shield) no longer stops the video: a thread stands in for the
+  render thread meanwhile (GcScheduler::during_collection), and images decode with the system's
+  AImageDecoder, shrunk while decoding, 40% faster than stb_image there.
+
 - The GPU renderer sets a uniform, program, blend function, scissor or texture only when it changes:
   the Shield's driver charges for every call. The pixels are the same.
 
