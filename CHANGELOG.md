@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased — a canvas sees every drawing primitive
+
+- The engine offers every drawing primitive (rounded rects, gradients, shadows, text, images,
+  vectors, border sweeps, arcs) and every clip, alpha, blend, offscreen group and transform to an
+  optional canvas before rasterizing it (`patches/embeddedReact-canvas.patch`, `er_canvas.h`). With
+  none installed the software path runs as before: the starter's framebuffer is byte for byte the
+  same. It is the seam a GPU renderer will draw through.
+
+- `PS5_REACT_CANVAS_TRACE=<file>` makes the desktop preview list every primitive of each commit, and
+  any pixels that reached the screen outside one. A traced Anyfin tour (home, rows, a title page,
+  stills, a menu) found none.
+
 ## Unreleased — the CLI uses the project's .venv
 
 - `npm run build`, `dev` and the rest ran whatever `python3` was on PATH, so they lost Pillow when

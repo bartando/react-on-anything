@@ -41,7 +41,8 @@
       "patches/embeddedReact-host-props-cost.patch",
       "patches/embeddedReact-slice-by-area.patch",
       "patches/embeddedReact-layer-radius.patch",
-      "patches/embeddedReact-rounded-clip-blend.patch"
+      "patches/embeddedReact-rounded-clip-blend.patch",
+      "patches/embeddedReact-canvas.patch"
     ]
   },
   "platform": {

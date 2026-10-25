@@ -158,5 +158,9 @@ build stage retains its full log.
 - Ship an installable CLI and a pinned CI matrix.
 
 The software renderer still owns the pixels. A future GPU backend can preserve
-the application API but is not implemented here. No part depends on RNPS,
+the application API but is not implemented here. Its seam is the engine's canvas
+(`er_canvas.h`): every drawing primitive, clip, offscreen group and transform is
+offered to an installed canvas before it is rasterized, and one that takes an op
+skips the software drawing. `PS5_REACT_CANVAS_TRACE=<file>` lists what the desktop
+preview draws per commit, run with `PS5_REACT_RENDER_WORKERS=1` for drawing order. No part depends on RNPS,
 Sony bundle signature bypasses, or changing the system home screen.

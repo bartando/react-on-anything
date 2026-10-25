@@ -28,6 +28,7 @@ void er_register_assets(void);
 #include "baked_sounds.h"
 #include "damage_tracker.hpp"
 #include "frame_stats.hpp"
+#include "canvas_trace.hpp"
 #include "gl_presenter.hpp"
 #include "host_api.hpp"
 #include "host_platform.hpp"
@@ -156,6 +157,7 @@ struct Host {
   // self-tests read back every frame. exposed forces the next frame out after the window reappears.
   bool skip_still = false, exposed = false;
   int render_worker_count = 1;
+  bool tracing = false;
   Uint32 previous_tick = 0, next_repeat = 0, next_image_stats = 0;
   // When the last frame callback ran: the next one advances by the whole frame period, swap wait included.
   std::int64_t previous_step_us = 0;
@@ -177,6 +179,7 @@ struct Host {
   VirtualPad virtual_pad;
 
   ~Host() {
+    if (tracing) canvas_trace::stop();
     ps5_react_stop_images();
     archives::stop();
     browser_capture::stop();
@@ -236,6 +239,11 @@ struct Host {
                                                                                    : render_workers::available_cpus());
     std::printf("[PS5-REACT] render workers=%d of %d, cpus=%d\n", render_worker_count, render_workers::max_workers(),
                 render_workers::available_cpus());
+    // PS5_REACT_CANVAS_TRACE=<file> lists every drawing primitive per commit (canvas_trace.hpp).
+    if (const char* trace = std::getenv("PS5_REACT_CANVAS_TRACE")) {
+      tracing = canvas_trace::start(trace, render_worker_count);
+      if (!tracing) std::fprintf(stderr, "[PS5-REACT] canvas trace: cannot write %s\n", trace);
+    }
     if (network::start()) ps5_react_start_images();
     ps5_react_start_sound();
     ErRuntimeConfig cfg = {};
@@ -482,7 +490,9 @@ struct Host {
       return false;
     }
     er_set_raster_deferred(false);
+    if (tracing) canvas_trace::commit_begin();
     er_commit();
+    if (tracing) canvas_trace::commit_end();
     stats.lap(FrameStats::update, now_us());
     if (ps5_react_exit_requested()) {
       running = false;
