@@ -8,6 +8,7 @@
 #include "audio/mixer.hpp"
 
 #include <aaudio/AAudio.h>
+#include <atomic>
 #include <dirent.h>
 #include <sys/resource.h>
 #include <sys/statvfs.h>
@@ -30,6 +31,11 @@ aaudio_data_callback_result_t render_audio(AAudioStream*, void* mixer, void* dat
 } // namespace
 
 void android_set_root(const char* path) { root = path; }
+namespace {
+std::atomic<ANativeWindow*> window{nullptr};
+}
+void android_set_window(ANativeWindow* to) { window = to; }
+ANativeWindow* android_window() { return window; }
 const char* android_root() { return root.c_str(); }
 void android_set_device(const char* device_model, const char* device_release) {
   model = device_model;

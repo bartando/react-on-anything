@@ -25,6 +25,10 @@ On the device, under `/sdcard/Android/data/<package>/files`:
 Logs go to logcat under the tag `ps5-react`. Video plays through the FFmpeg player the other hosts
 use, so it opens what they open (fMP4 HLS included, which the system's MediaPlayer cannot) and has
 the same audio tracks and subtitles. The picture decodes in MediaCodec (`native/android/media_codec.hpp`)
-straight into a SurfaceTexture the presenter draws; FFmpeg decodes the sound for the mixer. A codec
-MediaCodec refuses does not play: there is no software path for the picture, nor upscalers. Archives (libarchive) are not there yet; their API refuses each request. The system's CA store is gathered into one file for curl
+into hardware buffers the display shows on a system layer under the app's window, tagged with the
+stream's colours, so HDR10 and HLG reach the TV as HDR; the presenter leaves a hole in the window over
+it (`native/android/gl_video.cpp`). FFmpeg decodes the sound for the mixer. A codec MediaCodec refuses
+does not play: there is no software path for the picture, nor upscalers.
+`PS5_REACT_VIDEO_DUMP=<directory>` (in `options.env`) writes the first packets each decoder gets, to
+decode elsewhere. Archives (libarchive) are not there yet; their API refuses each request. The system's CA store is gathered into one file for curl
 at startup.

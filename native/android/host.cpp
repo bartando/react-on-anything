@@ -518,6 +518,7 @@ void on_command(android_app* app, int32_t command) {
         host.running = false;
         break;
       }
+      android_set_window(app->window);
       if (!host.create_surface()) {
         std::fprintf(stderr, "[PS5-REACT] EGL: could not create the window surface (0x%x)\n", eglGetError());
         host.running = false;
@@ -529,6 +530,7 @@ void on_command(android_app* app, int32_t command) {
       }
       break;
     case APP_CMD_TERM_WINDOW:
+      android_set_window(nullptr);
       host.destroy_surface();
       break;
     case APP_CMD_DESTROY:
@@ -555,6 +557,8 @@ void android_main(android_app* app) {
   app->onAppCmd = on_command;
   app->onInputEvent = on_input;
   ANativeActivity_setWindowFlags(app->activity, AWINDOW_FLAG_KEEP_SCREEN_ON | AWINDOW_FLAG_FULLSCREEN, 0);
+  // With alpha, so a video's layer below the window shows through the hole the presenter leaves.
+  ANativeActivity_setWindowFormat(app->activity, WINDOW_FORMAT_RGBA_8888);
   const std::string sandbox = host.files + "/sandbox";
   for (const char* mount : {"", "/app0", "/download0", "/temp0"}) mkdir((sandbox + mount).c_str(), 0755);
   android_set_root(sandbox.c_str());

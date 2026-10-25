@@ -9,5 +9,9 @@ void android_set_root(const char* path);
 const char* android_root();
 // Where the system's CA certificates were gathered into one PEM file for curl, or nullptr.
 void android_set_ca_bundle(const char* path);
+// The activity's window, which video layers (gl_video.cpp) go under; null while it has none.
+struct ANativeWindow;
+void android_set_window(ANativeWindow* window);
+ANativeWindow* android_window();
 // The model and release reported by device.info().
 void android_set_device(const char* model, const char* release);
