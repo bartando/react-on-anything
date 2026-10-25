@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Additional attribution term: see LICENSE-ATTRIBUTION.
 #include "media_codec.hpp"
+#include "annex_b.hpp"
 #include "video_frame.hpp"
 
 extern "C" {
@@ -40,83 +41,6 @@ const char* mime_of(AVCodecID id) {
     default: return nullptr;
   }
 }
-
-// MediaCodec takes H.264 and HEVC as Annex B; MP4 and Matroska store them length-prefixed, with the
-// parameter sets apart in the codec's header (avcC, hvcC). AnnexB converts packets and puts the header's
-// sets at the start of each keyframe's packet, so sets the packet carries itself come after and win:
-// some files' headers hold stale ones, which FFmpeg 7.1's filter puts right before the slice instead.
-struct AnnexB {
-  int length_size = 0; // 0: the packets are Annex B already
-  bool hevc = false;
-  std::vector<std::uint8_t> sets;
-
-  void start(const AVCodecParameters* parameters) {
-    hevc = parameters->codec_id == AV_CODEC_ID_HEVC;
-    const std::uint8_t* data = parameters->extradata;
-    const int size = parameters->extradata_size;
-    if (!data || size < 7 || data[0] != 1) return; // none, or Annex B already
-    const auto add = [&](const std::uint8_t* nal, int bytes) {
-      static const std::uint8_t start[] = {0, 0, 0, 1};
-      sets.insert(sets.end(), start, start + 4);
-      sets.insert(sets.end(), nal, nal + bytes);
-    };
-    int at;
-    if (hevc) {
-      if (size < 23) return;
-      length_size = (data[21] & 3) + 1;
-      const int arrays = data[22];
-      at = 23;
-      for (int a = 0; a < arrays && at + 3 <= size; ++a) {
-        const int count = data[at + 1] << 8 | data[at + 2];
-        at += 3;
-        for (int n = 0; n < count && at + 2 <= size; ++n) {
-          const int bytes = data[at] << 8 | data[at + 1];
-          if (at + 2 + bytes > size) return;
-          add(data + at + 2, bytes);
-          at += 2 + bytes;
-        }
-      }
-    } else {
-      length_size = (data[4] & 3) + 1;
-      at = 5;
-      for (int list = 0; list < 2 && at < size; ++list) {
-        const int count = list ? data[at] : data[at] & 31; // SPS count in 5 bits, PPS count in 8
-        ++at;
-        for (int n = 0; n < count && at + 2 <= size; ++n) {
-          const int bytes = data[at] << 8 | data[at + 1];
-          if (at + 2 + bytes > size) return;
-          add(data + at + 2, bytes);
-          at += 2 + bytes;
-        }
-      }
-    }
-  }
-
-  // The packet as Annex B into `out`; false if its lengths run past it.
-  bool convert(const AVPacket* packet, std::vector<std::uint8_t>& out) const {
-    out.clear();
-    const std::uint8_t* data = packet->data;
-    const int size = packet->size;
-    bool inserted = false;
-    for (int at = 0; at + length_size <= size;) {
-      std::uint32_t bytes = 0;
-      for (int i = 0; i < length_size; ++i) bytes = bytes << 8 | data[at + i];
-      at += length_size;
-      if (bytes == 0 || bytes > static_cast<std::uint32_t>(size - at)) return bytes == 0 && at == size;
-      const int type = hevc ? (data[at] >> 1) & 0x3f : data[at] & 0x1f;
-      const bool keyframe = hevc ? type >= 16 && type <= 23 : type == 5;
-      if (keyframe && !inserted) {
-        out.insert(out.begin(), sets.begin(), sets.end());
-        inserted = true;
-      }
-      static const std::uint8_t start[] = {0, 0, 0, 1};
-      out.insert(out.end(), start, start + 4);
-      out.insert(out.end(), data + at, data + at + bytes);
-      at += static_cast<int>(bytes);
-    }
-    return true;
-  }
-};
 
 // The pictures' colours as the stream tags them, for the display.
 video::LayerColor color_of(const AVCodecParameters* parameters) {
@@ -168,7 +92,8 @@ public:
     height_ = parameters->height;
     if (parameters->sample_aspect_ratio.num > 0 && parameters->sample_aspect_ratio.den > 0)
       aspect_ = static_cast<float>(av_q2d(parameters->sample_aspect_ratio));
-    if (parameters->codec_id == AV_CODEC_ID_H264 || parameters->codec_id == AV_CODEC_ID_HEVC) annex_b_.start(parameters);
+    // MediaCodec takes H.264 and HEVC as Annex B.
+    annex_b_.start(parameters);
 
     auto output = std::make_shared<video::CodecOutput>();
     output->color = color_of(parameters);
@@ -190,7 +115,7 @@ public:
     // A 4K keyframe outgrows the default input buffer.
     AMediaFormat_setInt32(format, AMEDIAFORMAT_KEY_MAX_INPUT_SIZE,
                           std::max(width_ * height_ * 3 / 4, 2 * 1024 * 1024));
-    if (!annex_b_.length_size && parameters->codec_id != AV_CODEC_ID_H264 && parameters->codec_id != AV_CODEC_ID_HEVC &&
+    if (!annex_b_.active() && parameters->codec_id != AV_CODEC_ID_H264 && parameters->codec_id != AV_CODEC_ID_HEVC &&
         parameters->extradata_size > 0)
       AMediaFormat_setBuffer(format, "csd-0", parameters->extradata, static_cast<std::size_t>(parameters->extradata_size));
     const media_status_t configured = AMediaCodec_configure(codec, format, window, nullptr, 0);
@@ -232,7 +157,7 @@ public:
       eos_sent_ = true;
       return true;
     }
-    if (!annex_b_.length_size) return feed(packet->data, packet->size, packet);
+    if (!annex_b_.active()) return feed(packet->data, packet->size, packet);
     if (!annex_b_.convert(packet, converted_)) return true; // skipped, as a corrupt packet is
     return feed(converted_.data(), static_cast<int>(converted_.size()), packet);
   }
@@ -342,7 +267,7 @@ private:
   }
 
   AVRational time_base_;
-  AnnexB annex_b_;
+  video::AnnexB annex_b_;
   std::vector<std::uint8_t> converted_;
   std::shared_ptr<video::CodecOutput> output_;
   std::deque<video::Frame> ready_;

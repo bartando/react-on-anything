@@ -34,7 +34,7 @@ add_library(main SHARED host.cpp host_platform.cpp network_platform.cpp unavaila
   ${SHARED}/audio_output_api.cpp ${SHARED}/host_api.cpp ${SHARED}/removals.cpp "${HUI_ROOT}/src/audio/mixer.cpp"
   ${SHARED}/gl_presenter.cpp ${SHARED}/frame_stats.cpp ${SHARED}/js_heap.cpp ${SHARED}/js_profiler.cpp
   ${SHARED}/damage_tracker.cpp ${SHARED}/canvas_trace.cpp ${SHARED}/gpu_renderer.cpp ${SHARED}/render_workers.cpp
-  ${SHARED}/input_script.cpp ${SHARED}/screenshot.cpp ${SHARED}/text_shaper.cpp ${SHARED}/video_api.cpp ${SHARED}/video_player.cpp
+  ${SHARED}/input_script.cpp ${SHARED}/screenshot.cpp ${SHARED}/text_shaper.cpp ${SHARED}/video_api.cpp ${SHARED}/video_player.cpp ${SHARED}/annex_b.cpp
   ${SHARED}/video_subtitles.cpp
   "${APP_LAYOUT}/assets.generated.c" "${APP_LAYOUT}/sounds.generated.c")
 target_compile_features(main PRIVATE cxx_std_20)

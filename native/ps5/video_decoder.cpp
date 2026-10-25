@@ -6,6 +6,7 @@
 // Player established on hardware (GPL-3.0; see notices/video-decoder.txt); this is a new implementation
 // against it. Anything the decoder does not take, FFmpeg decodes instead.
 #include "video_frame.hpp"
+#include "annex_b.hpp"
 #include "async_log.hpp"
 #include "platform/ps5/system.hpp"
 
@@ -334,7 +335,9 @@ private:
   float aspect_ = 1;
   std::shared_ptr<FramePool> pool_;
 
-  AVBSFContext* filter_ = nullptr;
+  video::AnnexB annex_b_;                   // H.264 and HEVC from MP4 and Matroska
+  std::vector<std::uint8_t> converted_;
+  AVBSFContext* filter_ = nullptr;          // VP9's superframe split
   AVPacket* filtered_ = nullptr;
   std::vector<std::uint8_t> annexb_header_; // Annex-B extradata, sent once ahead of the stream
   unsigned input_index_ = 0;
@@ -416,20 +419,19 @@ void Videodec2::restart() {
 }
 
 // MP4 and Matroska carry H.264 and HEVC length-prefixed with parameter sets in avcC/hvcC; the decoder
-// takes Annex-B with them in band. VP9 superframes split into their frames. A filter rebuilt after
-// every flush repeats the parameter sets before the next keyframe.
+// takes Annex-B with them in band, which AnnexB makes (annex_b.hpp), the sets before every keyframe.
+// VP9 superframes split into their frames.
 bool Videodec2::build_filter() {
   av_bsf_free(&filter_);
   const AVCodecParameters* p = parameters_;
-  const bool wrapped = p->extradata && p->extradata_size >= 4 && p->extradata[0] == 1;
   const std::uint32_t codec = slot_->codec;
-  const char* name = codec == kVp9 ? "vp9_superframe_split"
-                   : !wrapped ? nullptr : codec == kAvc ? "h264_mp4toannexb" : "hevc_mp4toannexb";
-  if (!name) {
+  const bool wrapped = codec != kVp9 && annex_b_.start(p);
+  const char* name = codec == kVp9 ? "vp9_superframe_split" : nullptr;
+  if (!name && !wrapped) {
     // Already Annex-B (MPEG-TS): its extradata holds the parameter sets, sent ahead of the stream.
     if (p->extradata && p->extradata_size > 0 && annexb_header_.empty())
       annexb_header_.assign(p->extradata, p->extradata + p->extradata_size);
-  } else {
+  } else if (name) {
     const AVBitStreamFilter* bsf = av_bsf_get_by_name(name);
     if (!bsf || av_bsf_alloc(bsf, &filter_) < 0) return false;
     avcodec_parameters_copy(filter_->par_in, p);
@@ -577,6 +579,10 @@ bool Videodec2::send(const AVPacket* packet) {
     return true;
   }
   const std::int64_t pts = packet->pts != kNoPts ? packet->pts : packet->dts;
+  if (annex_b_.active()) {
+    if (!annex_b_.convert(packet, converted_)) return true; // a packet that cannot be read is skipped
+    return submit(converted_.data(), converted_.size(), pts, true);
+  }
   if (!filter_) return submit(packet->data, packet->size, pts, true);
   AVPacket* copy = av_packet_clone(packet);
   if (!copy) return false;

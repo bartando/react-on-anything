@@ -178,7 +178,7 @@ def main():
     if config.get("video"):
         video_prefix = ffmpeg.ps5(sdk, archive_ports, env)
         sources.extend([ROOT / "native/shared/video_player.cpp", ROOT / "native/shared/video_subtitles.cpp",
-                        ROOT / "native/ps5/video_decoder.cpp"])
+                        ROOT / "native/ps5/video_decoder.cpp", ROOT / "native/shared/annex_b.cpp"])
         includes.append(video_prefix / "include")
         video_libs = [video_prefix / "lib" / name for name in ffmpeg.LIBRARIES] + [archive_ports / "lib/libssl.a"]
         # The SDK has no import stub for the hardware decoder: one empty function per call we make, under the
