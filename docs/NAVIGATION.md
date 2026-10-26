@@ -60,7 +60,7 @@ AppRegistry.registerComponent('menu', () => Menu);
 `npm run create` scaffolds this menu; `apps/starter`, `apps/tailwind-gallery`,
 `apps/system-explorer`, and `apps/motion-lab` use the patterns below.
 
-## Host input (input protocol v5)
+## Host input (input protocol v6)
 
 The input protocol is versioned on its own; it is not the native API's ABI
 version ([NATIVE-API.md](NATIVE-API.md#contract)).
@@ -80,6 +80,15 @@ Since input protocol v5, hosts also report the touchpad's first finger: `__ps5Re
 with its position 0..1 across and down the pad each frame it touches, and `__ps5ReactTouch(null)`
 once when it lifts (the PS5 reads the DualSense; the desktop, a controller's touchpad through SDL).
 See [Touchpad](#touchpad).
+
+Since input protocol v6, a host with a touchscreen (the Switch) reports its first finger too:
+`__ps5ReactScreenTouch(x, y)` in screen px each frame it touches, and `__ps5ReactScreenTouch(null)`
+once when it lifts. A tap presses the focusable element under it (focusing it first, as Cross would
+after a move; never past a `trap` scope), and a drag past 12 logical px scrolls the innermost
+ScrollView under it along the drag's axis, the content following the finger. Focus stays where it was
+through a drag. Where no ScrollView scrolls that way (a page that moves to its focused row itself), a
+drag steps focus instead, a move per 200 logical px against the finger, as the touchpad does. Input scripts take `tap:X:Y` and `drag:X1:Y1:X2:Y2` in screen px
+(runtime/js/focus/screen-touch.js).
 
 The focus manager does not move on these buttons: they go to the enclosing
 `FocusScope.onAction` handlers (tabs on L1/R1, a filter on Triangle, settings on Options)

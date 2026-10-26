@@ -17,6 +17,7 @@
 #define GL_GLEXT_PROTOTYPES
 #include <SDL2/SDL_opengl.h>
 #endif
+#include "gl_api.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -25,7 +26,8 @@
 #include <string>
 
 namespace {
-const char* vertex_source = R"(#version 410 core
+// The texture path's shaders are in the GLSL that desktop GL and GLES share, under each host's version.
+const char* vertex_source = GLSL_VERSION R"(
 uniform vec4 dst;   // framebuffer pixels: x0 y0 x1 y1
 uniform vec4 src;   // the part of the picture drawn, 0..1: x0 y0 x1 y1; beyond it, `contain`'s black bars
 uniform vec2 size;  // the framebuffer
@@ -84,7 +86,7 @@ bool bar(vec2 at) {
 }
 )";
 
-const char* texture_fragment = R"(#version 410 core
+const char* texture_fragment = GLSL_VERSION R"(
 in vec2 at;
 uniform sampler2D plane0, plane1, plane2;
 uniform int interleaved;

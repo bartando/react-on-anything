@@ -122,6 +122,19 @@ export function createFrame(parent) {
       frame.position = [frame.position[0], frame.position[1] - dy];
       frame.target[1] -= dy;
     },
+    /** Moves the content by (dx, dy) screen px now, as a finger drags it, from where it shows. */
+    drag(dx, dy) {
+      if (frame.handle == null) return;
+      frame.stop();
+      const [fromX, fromY] = NativeUI.scrollTo(frame.handle, NaN, NaN);
+      const [atX, atY] = NativeUI.scrollTo(frame.handle, Math.round(fromX - dx), Math.round(fromY - dy));
+      frame.x = Math.round(atX);
+      frame.y = Math.round(atY);
+      frame.position = [frame.x, frame.y];
+      deferImageFetches(IMAGE_DEFER_MS);
+      frame.notify();
+      frame.props.onScrollTarget?.({x: frame.x, y: frame.y});
+    },
     // Viewport or offset changed; while animating, y is the target, so listeners see where it is going.
     notify() {
       for (const listener of frame.listeners) listener();

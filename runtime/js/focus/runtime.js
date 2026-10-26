@@ -3,10 +3,11 @@
 // Additional attribution term: see LICENSE-ATTRIBUTION.
 // The app's focus manager, its React contexts, and the host input that drives it.
 import {createContext} from 'react';
-import {subscribeInput, subscribeTouch} from '../input.js';
+import {subscribeInput, subscribeScreenTouch, subscribeTouch} from '../input.js';
 import {dispatchBackPress} from '../native.js';
 import {installInspector} from './inspect.js';
 import {FocusManager} from './manager.js';
+import {frameAt, hitNode, ScreenTouch} from './screen-touch.js';
 import {TouchNavigator} from './touch.js';
 
 export const manager = new FocusManager();
@@ -22,7 +23,7 @@ export const NodeContext = createContext(null);
 export const AnchorContext = createContext(null);
 
 /**
- * @typedef {{type: 'move' | 'blocked', direction: import('./geometry.js').Direction, source?: 'touchpad'}
+ * @typedef {{type: 'move' | 'blocked', direction: import('./geometry.js').Direction, source?: 'touchpad' | 'touchscreen'}
  *   | {type: 'press' | 'back', handled: boolean}
  *   | {type: 'action', action: import('./manager.js').Action, handled: boolean}} NavigationEvent
  *   `blocked`: nothing to move to; `source` is 'touchpad' for a step of a swipe. `press`: handled when
@@ -52,3 +53,19 @@ subscribeInput(action => {
 const touchpad = new TouchNavigator(direction =>
   emit({type: manager.move(direction) ? 'move' : 'blocked', direction, source: 'touchpad'}));
 subscribeTouch((x, y) => touchpad.touch(x, y));
+
+// 12 logical px of a 1280-wide layout before a touch is a drag, and 200 per focus step where a drag has
+// nothing to scroll (about a row of cards).
+const logical = px => Math.round((globalThis.screen?.width ?? 1920) * px / 1280);
+const screenTouch = new ScreenTouch({
+  hit: (x, y) => hitNode(manager, x, y),
+  frameAt: (x, y, horizontal) => frameAt(manager, x, y, horizontal),
+  press: node => {
+    if (!manager.focus(node)) return;
+    const handled = manager.press();
+    if (handled !== null) emit({type: 'press', handled});
+  },
+  scroll: (frame, dx, dy) => frame.drag(dx, dy),
+  step: direction => emit({type: manager.move(direction) ? 'move' : 'blocked', direction, source: 'touchscreen'}),
+}, logical(12), logical(200));
+subscribeScreenTouch((x, y) => screenTouch.touch(x, y));

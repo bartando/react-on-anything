@@ -21,7 +21,7 @@ set(CMAKE_DL_LIBS "")
 add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../ps5" runtime)
 
 set(SHARED ../shared)
-add_executable(main host.cpp host_platform.cpp network_platform.cpp unavailable.cpp libc_shims.cpp
+add_executable(main host.cpp host_platform.cpp network_platform.cpp unavailable.cpp libc_shims.cpp video_decoder.cpp
   ../desktop/package_installer.cpp ../desktop/browser_capture.cpp
   ${SHARED}/network.cpp ${SHARED}/network_api.cpp
   ${SHARED}/package_api.cpp ${SHARED}/browser_capture_api.cpp ${SHARED}/lan.cpp ${SHARED}/lan_api.cpp
@@ -31,14 +31,20 @@ add_executable(main host.cpp host_platform.cpp network_platform.cpp unavailable.
   ${SHARED}/damage_tracker.cpp ${SHARED}/canvas_trace.cpp ${SHARED}/gpu_renderer.cpp ${SHARED}/render_workers.cpp
   ${SHARED}/input_script.cpp ${SHARED}/screenshot.cpp ${SHARED}/text_shaper.cpp ${SHARED}/video_api.cpp
   ${SHARED}/video_player.cpp ${SHARED}/video_subtitles.cpp ${SHARED}/gl_video.cpp ${SHARED}/gl_upscale.cpp
-  "${APP_LAYOUT}/assets.generated.c" "${APP_LAYOUT}/sounds.generated.c")
+  "${APP_GENERATED}/1920x1080/sounds.generated.c")
+# Both layouts' baked images and fonts, each registered by its own er_register_assets_<width>x<height>: the
+# host picks the layout at launch, 720p handheld and 1080p docked.
+foreach(LAYOUT 1920x1080 1280x720)
+  set(ASSETS "${APP_GENERATED}/${LAYOUT}/assets.generated.c")
+  target_sources(main PRIVATE "${ASSETS}")
+  set_source_files_properties("${ASSETS}" PROPERTIES COMPILE_DEFINITIONS "er_register_assets=er_register_assets_${LAYOUT}")
+endforeach()
 target_compile_features(main PRIVATE cxx_std_20)
 target_compile_options(main PRIVATE -Wall -Wextra -Werror)
 target_include_directories(main PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${SHARED} "${APP_GENERATED}" "${STB_IMAGE_DIR}" "${HUI_ROOT}/src"
   "${ER_ROOT}/engine/text" "${DEVKITPRO}/portlibs/switch/include")
 target_link_directories(main PRIVATE "${DEVKITPRO}/portlibs/switch/lib")
-target_compile_definitions(main PRIVATE PS5_REACT_WIDTH=${APP_LAYOUT_WIDTH} PS5_REACT_HEIGHT=${APP_LAYOUT_HEIGHT}
-  PS5_REACT_APP_NAME="${APP_NAME}")
+target_compile_definitions(main PRIVATE PS5_REACT_APP_NAME="${APP_NAME}")
 target_link_libraries(main PRIVATE er-bridge-quickjs er-software harfbuzz sheenbidi
   avformat avcodec swscale swresample avutil dav1d bz2 curl z EGL GLESv2 glapi drm_nouveau)
 

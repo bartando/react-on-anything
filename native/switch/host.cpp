@@ -5,8 +5,10 @@
 // (gpu_renderer.hpp) through Mesa's OpenGL ES 3.2, at the layout's size, which the system scales to the
 // screen (720p handheld, 1080p docked).
 //
-// The bundle comes from the NRO's RomFS (romfs:/app.bundle.js, romfs:/fonts/), so one nxlink push deploys
-// everything (tools/switch.py). The app's data lives on the SD card:
+// The app is laid out twice and the host picks the screen's own resolution at launch: 1280x720 on the
+// console's screen, 1920x1080 on a TV. Docking or undocking later keeps it, and the system scales the
+// frames. The bundles come from the NRO's RomFS (romfs:/<width>x<height>/app.bundle.js, romfs:/fonts/), so
+// one nxlink push deploys everything (tools/switch.py). The app's data lives on the SD card:
 //   sdmc:/switch/<app>/sandbox/{app0,download0,temp0}
 // and sdmc:/switch/<app>/options.env, KEY=VALUE lines set in the environment before boot, as on Android.
 // Launched by nxlink, stdout goes back to it.
@@ -25,7 +27,8 @@ extern "C" {
 #include "er_scene.h"
 #include "native_renderer.h"
 #include "software_backend.h"
-void er_register_assets(void);
+void er_register_assets_1920x1080(void);
+void er_register_assets_1280x720(void);
 }
 #include "actions.hpp"
 #include "damage_tracker.hpp"
@@ -58,7 +61,15 @@ void er_register_assets(void);
 #include <vector>
 
 namespace {
-constexpr int width = PS5_REACT_WIDTH, height = PS5_REACT_HEIGHT;
+struct Layout {
+  int width, height;
+  void (*register_assets)();
+  const char* bundle;
+};
+constexpr Layout kDocked{1920, 1080, er_register_assets_1920x1080, "romfs:/1920x1080/app.bundle.js"};
+constexpr Layout kHandheld{1280, 720, er_register_assets_1280x720, "romfs:/1280x720/app.bundle.js"};
+Layout layout = kDocked;
+int width = kDocked.width, height = kDocked.height;
 // Clocks for the app's run, restored on exit. By default the CPU runs at 1020 MHz, and handheld the GPU
 // at 384-460 MHz and memory at 1331 MHz: a scroll redraws all 1920x1080 pixels each frame, and the GPU
 // stalled the presenter for up to 80 ms. These are the console's own boost and docked rates.
@@ -149,6 +160,8 @@ struct Host {
   u64 held_mask = 0;
   std::uint64_t next_repeat = 0;
   std::uint64_t plus_down_ms = 0;
+  bool finger_down = false;
+  float finger_x = 0, finger_y = 0;
 
   ~Host() {
     gpu.stop();
@@ -182,8 +195,6 @@ struct Host {
 
   // PS5_REACT_BOOST=0 leaves the clocks as the system set them.
   void boost_clocks() {
-    AppletOperationMode mode = appletGetOperationMode();
-    std::printf("[PS5-REACT] %s\n", mode == AppletOperationMode_Console ? "docked" : "handheld");
     const char* option = std::getenv("PS5_REACT_BOOST");
     if ((option && !std::strcmp(option, "0")) || R_FAILED(clkrstInitialize())) return;
     clkrst = true;
@@ -247,9 +258,9 @@ struct Host {
     cfg.install_host_globals = ps5_react_install_host_api;
     runtime_started = er_runtime_init(&cfg);
     if (!runtime_started) return false;
-    er_register_assets();
+    layout.register_assets();
     text_shaper::install("romfs:/fonts", [](const char* line) { std::printf("[PS5-REACT] %s\n", line); });
-    const char* path = "romfs:/app.bundle.js";
+    const char* path = layout.bundle;
     FILE* file = std::fopen(path, "rb");
     if (!file) {
       std::fprintf(stderr, "[PS5-REACT] no bundle at %s: %s\n", path, std::strerror(errno));
@@ -298,6 +309,32 @@ struct Host {
   bool dispatch(const char* action) {
     JSValue arg = JS_NewString(er_runtime_context(), action);
     return call_input("__ps5ReactDispatch", 1, &arg);
+  }
+
+  // The touchscreen's first finger at (x, y) in screen px, or lifted.
+  bool screen_touch(bool down, float x, float y) {
+    JSContext* ctx = er_runtime_context();
+    JSValue args[2] = {down ? JS_NewFloat64(ctx, x) : JS_NULL, down ? JS_NewFloat64(ctx, y) : JS_NULL};
+    return call_input("__ps5ReactScreenTouch", 2, args);
+  }
+
+  // The panel reports 1280x720 whatever the layout; a finger is passed on each frame it moves, and once
+  // when it lifts. Docked there is no panel, and no touches.
+  bool read_touch() {
+    HidTouchScreenState state{};
+    const bool down = hidGetTouchScreenStates(&state, 1) && state.count > 0;
+    if (!down) {
+      if (!finger_down) return true;
+      finger_down = false;
+      return screen_touch(false, 0, 0);
+    }
+    const float x = static_cast<float>(state.touches[0].x) * width / 1280.0f;
+    const float y = static_cast<float>(state.touches[0].y) * height / 720.0f;
+    if (finger_down && x == finger_x && y == finger_y) return true;
+    finger_down = true;
+    finger_x = x;
+    finger_y = y;
+    return screen_touch(true, x, y);
   }
 
   // Presses since the last frame, held state for repeats, and the controller for Controller.getState().
@@ -361,6 +398,9 @@ struct Host {
       const bool saved = host::resolve_path(name.c_str(), path, sizeof path) &&
                          (gpu.drawing() ? gpu.save_screen(presenter, path) : save_screenshot(path));
       std::printf("[PS5-REACT] shot %s: %s\n", path, saved ? "saved" : std::strerror(errno));
+    } else if (!std::strncmp(action, "screen:", 7)) {
+      float x = 0, y = 0;
+      return screen_touch(std::sscanf(action + 7, "%f,%f", &x, &y) == 2, x, y);
     } else return dispatch(action);
     return true;
   }
@@ -369,7 +409,7 @@ struct Host {
     if (const char* line = stats.start_frame(now_us())) std::printf("[PS5-REACT] %s\n", line);
     er_set_raster_deferred(true);
     GamepadState state;
-    if (!read_pad(state) || !play_script()) return false;
+    if (!read_pad(state) || !read_touch() || !play_script()) return false;
     if (!running) return true;
     for (std::uint32_t pressed = virtual_pad.merge(state, now_ms()), i = 0; pressed; pressed >>= 1, ++i) {
       const char* held = pressed & 1 ? VirtualPad::action(i) : nullptr;
@@ -446,9 +486,16 @@ int main(int, char**) {
     mkdir(dir.c_str(), 0755);
   switch_set_root(sandbox.c_str());
   read_options(data + "/options.env");
-  std::printf("[PS5-REACT] data %s, layout %dx%d, applet type %d\n", data.c_str(), width, height,
-              static_cast<int>(appletGetAppletType()));
+  // PS5_REACT_LAYOUT=720 or 1080 picks one whatever the screen.
+  const bool docked = appletGetOperationMode() == AppletOperationMode_Console;
+  const char* forced = std::getenv("PS5_REACT_LAYOUT");
+  layout = forced ? (!std::strcmp(forced, "720") ? kHandheld : kDocked) : docked ? kDocked : kHandheld;
+  width = layout.width;
+  height = layout.height;
+  std::printf("[PS5-REACT] data %s, %s, layout %dx%d, applet type %d\n", data.c_str(), docked ? "docked" : "handheld",
+              width, height, static_cast<int>(appletGetAppletType()));
   padConfigureInput(1, HidNpadStyleSet_NpadStandard);
+  hidInitializeTouchScreen();
   // The engine's state is process-wide: one run per process.
   Host& host = *new Host;
   padInitializeDefault(&host.pad_state);

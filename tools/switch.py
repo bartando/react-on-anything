@@ -6,7 +6,8 @@ RomFS, and with --send pushes it to the Homebrew Menu's netloader and prints the
 
     python3 tools/switch.py --app-dir ../anyfin --send 192.168.0.142
 
-The app is laid out at 1920x1080 whatever its app.json says; the system scales it to the screen. Needs
+The app is laid out twice, at 1920x1080 and 1280x720, whatever its app.json says: the host picks the
+screen's own resolution at launch, 720p handheld and 1080p docked. Needs
 devkitPro (DEVKITPRO, default /opt/devkitpro) with switch-dev, switch-mesa, switch-ffmpeg and switch-curl.
 The console runs the NRO from the Homebrew Menu opened over a game (hold R), for the full memory."""
 import argparse
@@ -19,7 +20,7 @@ import sys
 from common import ROOT, bundle, dependency, run, stb_image
 from text_fonts import harfbuzz, sheenbidi
 
-WIDTH, HEIGHT = 1920, 1080
+LAYOUTS = [(1920, 1080), (1280, 720)]
 DEVKITPRO = Path(os.environ.get("DEVKITPRO", "/opt/devkitpro"))
 
 
@@ -43,16 +44,18 @@ def icon(app, path):
 def build(app):
     er = dependency("embeddedReact")
     app, config, generated = bundle(app, er)
-    layout = generated / f"{WIDTH}x{HEIGHT}"
-    if not (layout / "app.bundle.js").exists() or config.get("resolution") != "auto":
-        layout.mkdir(exist_ok=True)
-        run(["node", ROOT / "tools/bundle.mjs", er, app, layout, str(WIDTH), str(HEIGHT)],
-            log=generated.parent / f"bundle-{layout.name}.log")
     output = ROOT / ".build" / app.name / "switch"
     romfs = output / "romfs"
     shutil.rmtree(romfs, ignore_errors=True)
     (romfs / "fonts").mkdir(parents=True)
-    shutil.copy(layout / "app.bundle.js", romfs / "app.bundle.js")
+    for width, height in LAYOUTS:
+        layout = generated / f"{width}x{height}"
+        if not (layout / "app.bundle.js").exists() or config.get("resolution") != "auto":
+            layout.mkdir(exist_ok=True)
+            run(["node", ROOT / "tools/bundle.mjs", er, app, layout, str(width), str(height)],
+                log=generated.parent / f"bundle-{layout.name}.log")
+        (romfs / layout.name).mkdir()
+        shutil.copy(layout / "app.bundle.js", romfs / layout.name / "app.bundle.js")
     for font in sorted((generated / "fonts").iterdir()): shutil.copy(font, romfs / "fonts" / font.name)
     icon(app, output / "icon.jpg")
     nro = output / f"{app.name}.nro"
@@ -61,7 +64,6 @@ def build(app):
          f"-DCMAKE_TOOLCHAIN_FILE={DEVKITPRO}/cmake/Switch.cmake", "-DCMAKE_BUILD_TYPE=Release",
          f"-DER_ROOT={er}", f"-DHUI_ROOT={dependency('platform')}",
          f"-DFETCHCONTENT_SOURCE_DIR_QUICKJS={dependency('quickjsSource')}", f"-DAPP_GENERATED={generated}",
-         f"-DAPP_LAYOUT={layout}", f"-DAPP_LAYOUT_WIDTH={WIDTH}", f"-DAPP_LAYOUT_HEIGHT={HEIGHT}",
          f"-DAPP_NAME={app_name(config)}", f"-DAPP_TITLE={config['name']}",
          f"-DAPP_VERSION={config.get('version', '1.0.0')}", f"-DAPP_ICON={output / 'icon.jpg'}",
          f"-DAPP_ROMFS={romfs}", f"-DNRO_OUTPUT={nro}",

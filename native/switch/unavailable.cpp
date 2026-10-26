@@ -1,15 +1,11 @@
 // Copyright (C) 2026 half144 and PS5 React contributors
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Additional attribution term: see LICENSE-ATTRIBUTION.
-// What the Switch host does not have yet: archive extraction, and a hardware video decoder (the
-// software one plays up to 1080p). Their native APIs exist so an app loads.
+// What the Switch host does not have yet: archive extraction. Its native API exists so an app loads.
 #include "archives.hpp"
 #include "host_api.hpp"
 #include "image_loader.hpp"
 #include "network.hpp"
-#include "video_frame.hpp"
-
-#include <cstdint>
 
 namespace archives {
 void stop() {}
@@ -38,7 +34,3 @@ JSValue ps5_react_archive_api(JSContext* ctx) {
   JS_SetPropertyStr(ctx, api, "poll", JS_NewCFunction(ctx, none, "poll", 0));
   return api;
 }
-
-void video::preload_platform_decoder() {}
-std::int64_t video::software_pixel_limit() { return 1920 * 1088; }
-std::unique_ptr<video::Decoder> video::make_platform_decoder(const AVCodecParameters*, int, int) { return nullptr; }

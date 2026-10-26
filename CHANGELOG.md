@@ -2,6 +2,20 @@
 
 ## Unreleased — an Android TV host
 
+- `native/switch` runs an app on a Nintendo Switch with custom firmware, as a homebrew NRO drawing with
+  the GPU renderer through Mesa's GLES 3.2, and `tools/switch.py` builds it and pushes it to the Homebrew
+  Menu's netloader (docs/SWITCH.md). It lays the app out at 720p on the console and 1080p docked, raises
+  the CPU, GPU and memory clocks for its run, decodes video with NVDEC, and takes the controller and the
+  touchscreen. Anyfin's home screen holds 60 fps there.
+
+- A touchscreen is input protocol v6: `__ps5ReactScreenTouch(x, y)`, where a tap presses the element under
+  the finger and a drag scrolls the ScrollView under it, or steps focus where nothing scrolls that way.
+  The desktop preview's mouse is one, and input scripts take `tap:X:Y` and `drag:X1:Y1:X2:Y2`.
+
+- The GPU renderer keeps the pictures the engine draws on the CPU (icons) by content, so one drawn the
+  same way each frame is uploaded once. Re-uploading them through one texture cost the Switch 3 s of
+  stalls in a minute of browsing, and the desktop 550 ms in a short run; now 0.6 s and 80 ms.
+
 - `native/android` runs an app on Android TV through the GPU renderer and OpenGL ES 3.2, and
   `tools/android.py` builds, installs and starts it (docs/ANDROID.md). Anyfin runs on an NVIDIA SHIELD
   at 1080p and 55 to 59 fps on its home screen, on under one CPU core; most of each frame is the

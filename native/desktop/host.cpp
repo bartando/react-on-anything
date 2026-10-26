@@ -178,6 +178,7 @@ struct Host {
   GcScheduler gc_scheduler{now_us};
   JsProfiler profiler{now_us};
   bool l2_down = false, r2_down = false, key_l2_down = false, key_r2_down = false;
+  bool mouse_down = false; // the left button, a finger on the touchscreen
   VirtualPad virtual_pad;
 
   ~Host() {
@@ -332,6 +333,21 @@ struct Host {
     return call_input("__ps5ReactTouch", 2, args);
   }
 
+  // A touchscreen's first finger at (x, y) in screen px, or lifted: the mouse's left button here.
+  bool screen_touch(bool down, float x, float y) {
+    JSContext* ctx = er_runtime_context();
+    JSValue args[2] = {down ? JS_NewFloat64(ctx, x) : JS_NULL, down ? JS_NewFloat64(ctx, y) : JS_NULL};
+    return call_input("__ps5ReactScreenTouch", 2, args);
+  }
+
+  // The mouse in window points as a finger in screen px: the window shows the layout scaled.
+  bool mouse_touch(bool down, int x, int y) {
+    int window_w = 0, window_h = 0;
+    SDL_GetWindowSize(window, &window_w, &window_h);
+    if (window_w <= 0 || window_h <= 0) return true;
+    return screen_touch(down, static_cast<float>(x) * width / window_w, static_cast<float>(y) * height / window_h);
+  }
+
   // A development hook's result as text: strings as they are, anything else through JSON.
   std::string call_js(const char* name, const char* arg) {
     JSContext* ctx = er_runtime_context();
@@ -431,6 +447,9 @@ struct Host {
     } else if (!std::strncmp(action, "touch:", 6)) {
       float x = 0, y = 0;
       return touch(std::sscanf(action + 6, "%f,%f", &x, &y) == 2, x, y);
+    } else if (!std::strncmp(action, "screen:", 7)) {
+      float x = 0, y = 0;
+      return screen_touch(std::sscanf(action + 7, "%f,%f", &x, &y) == 2, x, y);
     } else return dispatch(action);
     return true;
   }
@@ -464,6 +483,12 @@ struct Host {
       } else if ((event.type == SDL_CONTROLLERTOUCHPADDOWN || event.type == SDL_CONTROLLERTOUCHPADMOTION ||
                   event.type == SDL_CONTROLLERTOUCHPADUP) && event.ctouchpad.touchpad == 0 && event.ctouchpad.finger == 0) {
         if (!touch(event.type != SDL_CONTROLLERTOUCHPADUP, event.ctouchpad.x, event.ctouchpad.y)) return false;
+      } else if ((event.type == SDL_MOUSEBUTTONDOWN || event.type == SDL_MOUSEBUTTONUP) &&
+                 event.button.button == SDL_BUTTON_LEFT) {
+        mouse_down = event.type == SDL_MOUSEBUTTONDOWN;
+        if (!mouse_touch(mouse_down, event.button.x, event.button.y)) return false;
+      } else if (event.type == SDL_MOUSEMOTION && mouse_down) {
+        if (!mouse_touch(true, event.motion.x, event.motion.y)) return false;
       } else if (event.type == SDL_CONTROLLERAXISMOTION) {
         const auto trigger = [&](bool& down, const char* name) {
           if (crossed(down, event.caxis.value / 32767.0f)) action = name;
