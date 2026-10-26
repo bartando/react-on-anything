@@ -5,7 +5,7 @@
 # Built with devkitPro's toolchain (Switch.cmake) by tools/switch.py, which packs the bundle into its
 # RomFS. FFmpeg, curl and Mesa are devkitPro's switch-* packages.
 cmake_minimum_required(VERSION 3.16)
-project(ps5-react-switch C CXX)
+project(react-on-anything-switch C CXX)
 add_library(harfbuzz STATIC "${HB_ROOT}/src/harfbuzz.cc" "${HB_ROOT}/src/hb-raster-draw.cc" "${HB_ROOT}/src/hb-raster-image.cc")
 target_compile_features(harfbuzz PRIVATE cxx_std_17)
 target_compile_definitions(harfbuzz PUBLIC HB_TINY HB_HAS_RASTER)
@@ -44,9 +44,9 @@ target_compile_options(main PRIVATE -Wall -Wextra -Werror)
 target_include_directories(main PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${SHARED} "${APP_GENERATED}" "${STB_IMAGE_DIR}" "${HUI_ROOT}/src"
   "${ER_ROOT}/engine/text" "${DEVKITPRO}/portlibs/switch/include")
 target_link_directories(main PRIVATE "${DEVKITPRO}/portlibs/switch/lib")
-target_compile_definitions(main PRIVATE PS5_REACT_APP_NAME="${APP_NAME}")
+target_compile_definitions(main PRIVATE ROA_APP_NAME="${APP_NAME}")
 target_link_libraries(main PRIVATE er-bridge-quickjs er-software harfbuzz sheenbidi
   avformat avcodec swscale swresample avutil dav1d bz2 curl z EGL GLESv2 glapi drm_nouveau)
 
-nx_generate_nacp(main.nacp NAME "${APP_TITLE}" AUTHOR "PS5 React" VERSION "${APP_VERSION}")
+nx_generate_nacp(main.nacp NAME "${APP_TITLE}" AUTHOR "React on Anything" VERSION "${APP_VERSION}")
 nx_create_nro(main OUTPUT "${NRO_OUTPUT}" NACP main.nacp ICON "${APP_ICON}" ROMFS "${APP_ROMFS}")

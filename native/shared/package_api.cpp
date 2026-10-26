@@ -61,7 +61,7 @@ JSValue poll(JSContext* ctx, JSValueConst, int, JSValueConst*) {
 }
 }
 
-JSValue ps5_react_package_api(JSContext* ctx) {
+JSValue roa_package_api(JSContext* ctx) {
   JSValue api = JS_NewObject(ctx);
   JS_SetPropertyStr(ctx, api, "install", JS_NewCFunction(ctx, install, "install", 2));
   JS_SetPropertyStr(ctx, api, "cancel", JS_NewCFunction(ctx, cancel, "cancel", 1));

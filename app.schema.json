@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "PS5 React app",
+  "title": "React on Anything app",
   "type": "object",
   "required": [
     "titleId",

@@ -97,7 +97,7 @@ void read_options(const std::string& path) {
     const std::size_t equals = line.find('=');
     if (equals == std::string::npos) continue;
     setenv(line.substr(0, equals).c_str(), line.substr(equals + 1).c_str(), 1);
-    std::printf("[PS5-REACT] option %s\n", line.c_str());
+    std::printf("[ROA] option %s\n", line.c_str());
   }
 }
 
@@ -165,7 +165,7 @@ struct Host {
 
   ~Host() {
     gpu.stop();
-    ps5_react_stop_images();
+    roa_stop_images();
     archives::stop();
     browser_capture::stop();
     lan::stop();
@@ -175,7 +175,7 @@ struct Host {
     video_layers::stop();
     if (runtime_started) er_runtime_shutdown();
     text_shaper::shutdown();
-    ps5_react_stop_sound();
+    roa_stop_sound();
     render_workers::stop();
     if (backend_started) er_software_backend_destroy();
     presenter.release();
@@ -193,9 +193,9 @@ struct Host {
     if (clkrst) clkrstExit();
   }
 
-  // PS5_REACT_BOOST=0 leaves the clocks as the system set them.
+  // ROA_BOOST=0 leaves the clocks as the system set them.
   void boost_clocks() {
-    const char* option = std::getenv("PS5_REACT_BOOST");
+    const char* option = std::getenv("ROA_BOOST");
     if ((option && !std::strcmp(option, "0")) || R_FAILED(clkrstInitialize())) return;
     clkrst = true;
     for (std::size_t i = 0; i < std::size(kBoost); ++i) {
@@ -205,9 +205,9 @@ struct Host {
       clkrstGetClockRate(&clock.session, &before);
       if (before && before < kBoost[i].hz && R_SUCCEEDED(clkrstSetClockRate(&clock.session, kBoost[i].hz))) {
         clock.before = before;
-        std::printf("[PS5-REACT] %s %u -> %u MHz\n", kBoost[i].name, before / 1000000, kBoost[i].hz / 1000000);
+        std::printf("[ROA] %s %u -> %u MHz\n", kBoost[i].name, before / 1000000, kBoost[i].hz / 1000000);
       } else {
-        std::printf("[PS5-REACT] %s stays at %u MHz\n", kBoost[i].name, before / 1000000);
+        std::printf("[ROA] %s stays at %u MHz\n", kBoost[i].name, before / 1000000);
         clkrstCloseSession(&clock.session);
       }
     }
@@ -241,29 +241,29 @@ struct Host {
     backend_started = er_software_backend_init(width, height);
     if (!backend_started || !damage_tracker_install(width, height)) return false;
     er_set_layers_enabled(presenter.layers_supported());
-    // The GPU draws unless PS5_REACT_GPU=0; it needs the ops in drawing order, from one worker.
-    const char* gpu_option = std::getenv("PS5_REACT_GPU");
+    // The GPU draws unless ROA_GPU=0; it needs the ops in drawing order, from one worker.
+    const char* gpu_option = std::getenv("ROA_GPU");
     const bool gpu_drawing = !gpu_option || std::strcmp(gpu_option, "0") != 0;
     render_worker_count = render_workers::start(gpu_drawing ? 1 : render_workers::available_cpus());
-    std::printf("[PS5-REACT] render workers=%d, %s\n", render_worker_count, gpu_drawing ? "gpu" : "software");
+    std::printf("[ROA] render workers=%d, %s\n", render_worker_count, gpu_drawing ? "gpu" : "software");
     if (gpu_drawing && !gpu.start(width, height, GpuRenderer::Mode::draw))
-      std::fprintf(stderr, "[PS5-REACT] gpu renderer: could not start\n");
-    if (network::start()) ps5_react_start_images();
-    ps5_react_start_sound();
+      std::fprintf(stderr, "[ROA] gpu renderer: could not start\n");
+    if (network::start()) roa_start_images();
+    roa_start_sound();
     ErRuntimeConfig cfg = {};
     cfg.screen_width = width; cfg.screen_height = height; cfg.screen_scale = 2;
     cfg.memory_limit = kJsMemoryLimit;
     cfg.malloc_functions = js_heap_functions();
     cfg.max_stack_size = 1024 * 1024;
-    cfg.install_host_globals = ps5_react_install_host_api;
+    cfg.install_host_globals = roa_install_host_api;
     runtime_started = er_runtime_init(&cfg);
     if (!runtime_started) return false;
     layout.register_assets();
-    text_shaper::install("romfs:/fonts", [](const char* line) { std::printf("[PS5-REACT] %s\n", line); });
+    text_shaper::install("romfs:/fonts", [](const char* line) { std::printf("[ROA] %s\n", line); });
     const char* path = layout.bundle;
     FILE* file = std::fopen(path, "rb");
     if (!file) {
-      std::fprintf(stderr, "[PS5-REACT] no bundle at %s: %s\n", path, std::strerror(errno));
+      std::fprintf(stderr, "[ROA] no bundle at %s: %s\n", path, std::strerror(errno));
       return false;
     }
     std::fseek(file, 0, SEEK_END);
@@ -275,9 +275,9 @@ struct Host {
                                        static_cast<std::size_t>(size);
     std::fclose(file);
     if (!read || !er_runtime_load_source(source.data(), static_cast<std::size_t>(size), path)) return false;
-    if (const char* text = std::getenv("PS5_REACT_INPUT_SCRIPT")) {
+    if (const char* text = std::getenv("ROA_INPUT_SCRIPT")) {
       char error[160];
-      if (!script.parse(text, error, sizeof error)) std::fprintf(stderr, "PS5_REACT_INPUT_SCRIPT: %s\n", error);
+      if (!script.parse(text, error, sizeof error)) std::fprintf(stderr, "ROA_INPUT_SCRIPT: %s\n", error);
     }
     previous_step_us = now_us();
     return true;
@@ -308,14 +308,14 @@ struct Host {
 
   bool dispatch(const char* action) {
     JSValue arg = JS_NewString(er_runtime_context(), action);
-    return call_input("__ps5ReactDispatch", 1, &arg);
+    return call_input("__roaDispatch", 1, &arg);
   }
 
   // The touchscreen's first finger at (x, y) in screen px, or lifted.
   bool screen_touch(bool down, float x, float y) {
     JSContext* ctx = er_runtime_context();
     JSValue args[2] = {down ? JS_NewFloat64(ctx, x) : JS_NULL, down ? JS_NewFloat64(ctx, y) : JS_NULL};
-    return call_input("__ps5ReactScreenTouch", 2, args);
+    return call_input("__roaScreenTouch", 2, args);
   }
 
   // The panel reports 1280x720 whatever the layout; a finger is passed on each frame it moves, and once
@@ -348,7 +348,7 @@ struct Host {
       if (held & binding.mask) state.buttons |= 1u << binding.button;
       if (!(pressed & binding.mask)) continue;
       // Next to the slow-frame lines, so a lag can be traced to what the player pressed.
-      std::printf("[PS5-REACT] press %s\n", action_name(binding.action));
+      std::printf("[ROA] press %s\n", action_name(binding.action));
       if (!dispatch(action_name(binding.action))) return false;
       if (repeats(binding.action)) {
         held_button = binding.button;
@@ -359,7 +359,7 @@ struct Host {
     }
     if (pressed & HidNpadButton_Plus) plus_down_ms = now_ms();
     if ((held & HidNpadButton_Plus) && now_ms() - plus_down_ms >= kQuitHoldMs) {
-      std::printf("[PS5-REACT] + held: quitting\n");
+      std::printf("[ROA] + held: quitting\n");
       running = false;
       return true;
     }
@@ -368,7 +368,7 @@ struct Host {
     if (held_action && !(held & held_mask)) held_action = nullptr;
     if (held_action && now_ms() >= next_repeat) {
       next_repeat = now_ms() + 110;
-      std::printf("[PS5-REACT] press %s (held)\n", held_action);
+      std::printf("[ROA] press %s (held)\n", held_action);
       if (!dispatch(held_action)) return false;
     }
     const HidAnalogStickState left = padGetStickPos(&pad_state, 0), right = padGetStickPos(&pad_state, 1);
@@ -386,7 +386,7 @@ struct Host {
   bool play_script() {
     const char* action = script.next(now_ms());
     if (!action) return true;
-    std::printf("[PS5-REACT] script: %s\n", action);
+    std::printf("[ROA] script: %s\n", action);
     if (!std::strcmp(action, "quit")) running = false;
     else if (VirtualPad::is_step(action)) {
       char error[160];
@@ -397,7 +397,7 @@ struct Host {
       // With the GPU drawing, the software framebuffer holds only what it left to the CPU.
       const bool saved = host::resolve_path(name.c_str(), path, sizeof path) &&
                          (gpu.drawing() ? gpu.save_screen(presenter, path) : save_screenshot(path));
-      std::printf("[PS5-REACT] shot %s: %s\n", path, saved ? "saved" : std::strerror(errno));
+      std::printf("[ROA] shot %s: %s\n", path, saved ? "saved" : std::strerror(errno));
     } else if (!std::strncmp(action, "screen:", 7)) {
       float x = 0, y = 0;
       return screen_touch(std::sscanf(action + 7, "%f,%f", &x, &y) == 2, x, y);
@@ -406,7 +406,7 @@ struct Host {
   }
 
   bool frame() {
-    if (const char* line = stats.start_frame(now_us())) std::printf("[PS5-REACT] %s\n", line);
+    if (const char* line = stats.start_frame(now_us())) std::printf("[ROA] %s\n", line);
     er_set_raster_deferred(true);
     GamepadState state;
     if (!read_pad(state) || !read_touch() || !play_script()) return false;
@@ -415,12 +415,12 @@ struct Host {
       const char* held = pressed & 1 ? VirtualPad::action(i) : nullptr;
       if (held && !dispatch(held)) return false;
     }
-    ps5_react_set_gamepad(state);
+    roa_set_gamepad(state);
     stats.lap(FrameStats::input, now_us());
     er_perf_phase_begin(ER_PERF_PHASE_JS);
     er_runtime_pump();
     const std::int64_t step_us = now_us();
-    const bool stepped = ps5_react_frame(er_runtime_context(), std::min(50.0, (step_us - previous_step_us) / 1000.0));
+    const bool stepped = roa_frame(er_runtime_context(), std::min(50.0, (step_us - previous_step_us) / 1000.0));
     previous_step_us = step_us;
     er_perf_phase_end(ER_PERF_PHASE_JS);
     if (!stepped) {
@@ -431,7 +431,7 @@ struct Host {
     er_commit();
     if (gpu.active()) gpu.replay();
     stats.lap(FrameStats::update, now_us());
-    if (ps5_react_exit_requested()) {
+    if (roa_exit_requested()) {
       running = false;
       return true;
     }
@@ -455,13 +455,13 @@ struct Host {
     stats.lap(FrameStats::swap, now_us());
     if (const char* line = gc_scheduler.frame(JS_GetRuntime(er_runtime_context()), now_us(), repainted,
                                               static_cast<std::size_t>(width) * height))
-      std::printf("[PS5-REACT] %s\n", line);
+      std::printf("[ROA] %s\n", line);
     embedded_renderer_tick(16);
-    if (const char* line = stats.end_frame(slow_frame_us)) std::printf("[PS5-REACT] %s\n", line);
+    if (const char* line = stats.end_frame(slow_frame_us)) std::printf("[ROA] %s\n", line);
     if (now_ms() >= next_image_stats) {
       next_image_stats = now_ms() + 2000;
       if (std::string line = images::stats(); line != image_stats) {
-        std::printf("[PS5-REACT] images: %s\n", line.c_str());
+        std::printf("[ROA] images: %s\n", line.c_str());
         image_stats = std::move(line);
       }
     }
@@ -480,19 +480,19 @@ int main(int, char**) {
   if (__nxlink_host.s_addr) nxlinkStdio();
   setvbuf(stdout, nullptr, _IOLBF, 0);
   romfsInit();
-  const std::string data = "sdmc:/switch/" PS5_REACT_APP_NAME;
+  const std::string data = "sdmc:/switch/" ROA_APP_NAME;
   const std::string sandbox = data + "/sandbox";
   for (const std::string& dir : {data, sandbox, sandbox + "/app0", sandbox + "/download0", sandbox + "/temp0"})
     mkdir(dir.c_str(), 0755);
   switch_set_root(sandbox.c_str());
   read_options(data + "/options.env");
-  // PS5_REACT_LAYOUT=720 or 1080 picks one whatever the screen.
+  // ROA_LAYOUT=720 or 1080 picks one whatever the screen.
   const bool docked = appletGetOperationMode() == AppletOperationMode_Console;
-  const char* forced = std::getenv("PS5_REACT_LAYOUT");
+  const char* forced = std::getenv("ROA_LAYOUT");
   layout = forced ? (!std::strcmp(forced, "720") ? kHandheld : kDocked) : docked ? kDocked : kHandheld;
   width = layout.width;
   height = layout.height;
-  std::printf("[PS5-REACT] data %s, %s, layout %dx%d, applet type %d\n", data.c_str(), docked ? "docked" : "handheld",
+  std::printf("[ROA] data %s, %s, layout %dx%d, applet type %d\n", data.c_str(), docked ? "docked" : "handheld",
               width, height, static_cast<int>(appletGetAppletType()));
   padConfigureInput(1, HidNpadStyleSet_NpadStandard);
   hidInitializeTouchScreen();
@@ -501,13 +501,13 @@ int main(int, char**) {
   padInitializeDefault(&host.pad_state);
   host.boost_clocks();
   if (!host.start_gl()) {
-    std::fprintf(stderr, "[PS5-REACT] EGL: could not create an OpenGL ES 3.2 context (0x%x)\n", eglGetError());
+    std::fprintf(stderr, "[ROA] EGL: could not create an OpenGL ES 3.2 context (0x%x)\n", eglGetError());
   } else if (!host.boot()) {
-    std::fprintf(stderr, "[PS5-REACT] boot failed: %s\n", er_runtime_last_error());
+    std::fprintf(stderr, "[ROA] boot failed: %s\n", er_runtime_last_error());
   } else {
     while (host.running && appletMainLoop()) {
       if (!host.frame()) {
-        std::fprintf(stderr, "[PS5-REACT] stopped: %s\n", er_runtime_last_error());
+        std::fprintf(stderr, "[ROA] stopped: %s\n", er_runtime_last_error());
         break;
       }
     }

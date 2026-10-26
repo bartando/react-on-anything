@@ -119,14 +119,14 @@ JSValue poll(JSContext* ctx, JSValueConst, int, JSValueConst*) {
 
 } // namespace
 
-bool ps5_react_start_images() {
+bool roa_start_images() {
   char cache[PATH_MAX];
   return images::start(host::resolve_path("/cache0/images", cache, sizeof cache) ? cache : "");
 }
 
-void ps5_react_stop_images() { images::stop(unregister); }
+void roa_stop_images() { images::stop(unregister); }
 
-JSValue ps5_react_image_api(JSContext* ctx) {
+JSValue roa_image_api(JSContext* ctx) {
   JSValue out = JS_NewObject(ctx);
   for (const auto& item : {std::pair<const char*, JSCFunction*>{"load", &load}, {"release", &release}, {"warm", &warm}, {"defer", &defer}, {"poll", &poll}})
     JS_SetPropertyStr(ctx, out, item.first, JS_NewCFunction(ctx, item.second, item.first, 0));

@@ -23,20 +23,20 @@ function deliver() {
 // drain, which runs inside React's batch like the bridge's own events: a direct host call is outside
 // it, so each setState of a handler would render and commit on its own, and the frame log would
 // count that render outside `react`.
-globalThis.__ps5ReactDispatch = action => {
+globalThis.__roaDispatch = action => {
   if (pending.push(action) === 1) Promise.resolve().then(deliver);
 };
 
 // Input protocol v5: the touchpad's first finger, each frame it moves, at (x, y) 0..1 across the pad,
 // and (null) once when it lifts. The focus runtime turns its travel into moves (focus/touch.js).
-globalThis.__ps5ReactTouch = (x, y) => {
+globalThis.__roaTouch = (x, y) => {
   if (pending.push([x ?? null, y ?? null]) === 1) Promise.resolve().then(deliver);
 };
 
 // Input protocol v6: a touchscreen's first finger, each frame it moves, at (x, y) in screen px, and
 // (null) once when it lifts. The focus runtime turns taps into presses and drags into scrolling
 // (focus/screen-touch.js).
-globalThis.__ps5ReactScreenTouch = (x, y) => {
+globalThis.__roaScreenTouch = (x, y) => {
   if (pending.push({x: x ?? null, y: y ?? null}) === 1) Promise.resolve().then(deliver);
 };
 

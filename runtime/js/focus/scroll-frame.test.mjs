@@ -15,14 +15,14 @@ function setup(maxY) {
     return [engine.x, engine.y, 0, engine.maxY];
   }};
   engine.deferred = 0;
-  globalThis.__ps5ReactNative = {image: {defer: ms => { engine.deferred = ms; }}};
+  globalThis.__roaNative = {image: {defer: ms => { engine.deferred = ms; }}};
   const targets = [];
   const frame = createFrame(null);
   frame.props = {onScrollTarget: target => targets.push(target)};
   frame.ref(1);
   frame.onLayout({layout: {x: 0, y: 0, width: 1280, height: 720}});
   const settle = () => {
-    for (let i = 0; i < 200 && frame.timer !== null; i++) globalThis.__ps5ReactFrame(1000 / 60);
+    for (let i = 0; i < 200 && frame.timer !== null; i++) globalThis.__roaFrame(1000 / 60);
   };
   return {engine, frame, targets, settle};
 }
@@ -56,7 +56,7 @@ test('a 120 Hz display scrolls at the 60 Hz speed, through the positions between
     frame.reveal({x: 0, y: 3000, width: 100, height: 100}, null);
     const positions = [];
     for (let i = 0; i < 400 && frame.timer !== null; i++) {
-      globalThis.__ps5ReactFrame(1000 / hz);
+      globalThis.__roaFrame(1000 / hz);
       positions.push(engine.y);
     }
     return positions;
@@ -74,7 +74,7 @@ test('while it animates, position is where the engine shows the view (VirtualLis
   frame.reveal({x: 0, y: 3000, width: 100, height: 100}, null);
   assert.deepEqual(frame.position, [0, 0]);
   for (let i = 0; i < 5; i++) {
-    globalThis.__ps5ReactFrame(1000 / 120);
+    globalThis.__roaFrame(1000 / 120);
     assert.deepEqual(frame.position, [engine.x, engine.y]);
   }
   assert.ok(frame.position[1] > 0 && frame.timer !== null);
@@ -87,7 +87,7 @@ test('a fling coasts on along the finger, slowing to a stop, and stops at the ed
   engine.y = 1000;
   // The finger went up at 2 px per ms: the content scrolls down, about 2 × 325 px further.
   frame.fling(0, -2);
-  globalThis.__ps5ReactFrame(1000 / 60);
+  globalThis.__roaFrame(1000 / 60);
   const first = engine.y - 1000;
   settle();
   assert.ok(first > 25 && first < 35, `${first} px in the first frame`);
@@ -104,14 +104,14 @@ test('a fling coasts on along the finger, slowing to a stop, and stops at the ed
 test('a touch or a focus scroll takes over from a fling', () => {
   const {engine, frame} = setup(50000);
   frame.fling(0, -2);
-  globalThis.__ps5ReactFrame(1000 / 60);
+  globalThis.__roaFrame(1000 / 60);
   assert.equal(frame.halt(), true);
   const caught = engine.y;
-  globalThis.__ps5ReactFrame(1000 / 60);
+  globalThis.__roaFrame(1000 / 60);
   assert.equal(engine.y, caught, 'caught where it was');
   assert.equal(frame.halt(), false, 'nothing left to catch');
   frame.fling(0, -2);
   frame.reveal({x: 0, y: 5000, width: 100, height: 100}, null);
-  for (let i = 0; i < 400 && frame.timer !== null; i++) globalThis.__ps5ReactFrame(1000 / 60);
+  for (let i = 0; i < 400 && frame.timer !== null; i++) globalThis.__roaFrame(1000 / 60);
   assert.equal(engine.y, 4412, 'the focus scroll went where focus is');
 });

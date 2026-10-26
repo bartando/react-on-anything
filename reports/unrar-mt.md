@@ -1,6 +1,6 @@
 # Multithreaded UnRAR for RAR extraction
 
-Branch `perf/unrar-mt` (worktree `~/Documents/ps5-react-wt-unrar`), based on `main` at `6c168a6`. It hasn't been pushed.
+Branch `perf/unrar-mt` (worktree `~/Documents/react-on-anything-wt-unrar`), based on `main` at `6c168a6`. It hasn't been pushed.
 
 ## What changed
 
@@ -30,7 +30,7 @@ archives.cpp: preflight, staging, receipt   request on stdin: threads, window, l
 
 **Every `f` report is checked as an untrusted entry before it enters the receipt.** The engine checks:
 - `safe()` on the path
-- no `.ps5-react-` in the name
+- no `.react-on-anything-` in the name
 - `plain_path` with no link
 - `lstat` shows a regular file of the reported size
 - the size limit
@@ -103,7 +103,7 @@ The `-hp` set with a password extracts through the worker. Before, it needed `Ra
 
 - **`tools/test_archives.py`:** the whole suite passes with RAR going through the worker. Cases added:
   - a nested image flattened to the set root
-  - names `../escape`, `/escape`, `a\..\..\escape`, `a/../../escape`, `x/.ps5-react-extraction` and a RAR5 symlink: all refused, and nothing is created outside staging
+  - names `../escape`, `/escape`, `a\..\..\escape`, `a/../../escape`, `x/.react-on-anything-extraction` and a RAR5 symlink: all refused, and nothing is created outside staging
   - a missing middle volume reports "missing volume"
   - no password reports "password"
 - **`tools/tests/rar_worker_stress.cpp`:** random cancels and `stop()` mid-extraction, with UBSan on the engine.

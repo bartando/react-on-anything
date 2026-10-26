@@ -89,7 +89,7 @@ def banner(app, path):
 
 
 def package_name(config):
-    return "dev.ps5react." + "".join(c for c in config["name"].lower() if c.isalnum())
+    return "dev.reactonanything." + "".join(c for c in config["name"].lower() if c.isalnum())
 
 
 def build(app):
@@ -158,7 +158,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--app-dir", type=Path, default=ROOT / "apps/starter")
     parser.add_argument("--device", help="adb serial to install on and start")
-    parser.add_argument("--options", default="", help="options.env lines, e.g. 'PS5_REACT_GPU=0'")
+    parser.add_argument("--options", default="", help="options.env lines, e.g. 'ROA_GPU=0'")
     args = parser.parse_args()
     apk, package, layout, generated = build(args.app_dir.expanduser().resolve())
     if args.device: deploy(args.device, apk, package, layout, generated, args.options.replace(";", "\n"))

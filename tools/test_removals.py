@@ -13,7 +13,7 @@ def tree(root,files):
 
 def main():
  quickjs=dependency("quickjsSource")
- with tempfile.TemporaryDirectory(prefix="ps5-react-removals-") as tmp:
+ with tempfile.TemporaryDirectory(prefix="react-on-anything-removals-") as tmp:
   root=Path(tmp);binary=root/"removal-client"
   subprocess.run(["clang++","-std=c++20","-O2","-Wall","-Wextra","-Werror","-pthread","-I",str(ROOT/"native/shared"),"-I",str(quickjs),
    str(ROOT/"tools/tests/removal_client.cpp"),str(ROOT/"native/shared/removals.cpp"),"-o",str(binary)],check=True)

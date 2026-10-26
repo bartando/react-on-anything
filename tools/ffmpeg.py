@@ -43,7 +43,7 @@ def source():
     """Source directory of the pinned release with the lock's patches applied."""
     pinned = LOCK["ffmpeg"]
     directory = DEPS / f"ffmpeg-{pinned['version']}"
-    marker = directory / ".ps5-react-patches"
+    marker = directory / ".react-on-anything-patches"
     applied = marker.read_text() if marker.exists() else ""
     if (directory / "configure").exists() and applied != patches_digest():
         shutil.rmtree(directory)

@@ -7,7 +7,7 @@
 #ifdef PROSPERO
 #include "app_config.hpp"
 #endif
-#if !defined(PROSPERO) || PS5_REACT_NETWORKING
+#if !defined(PROSPERO) || ROA_NETWORKING
 #include <curl/curl.h>
 #include <algorithm>
 #include <array>
@@ -531,7 +531,7 @@ bool configure_transport(void* handle, const std::string& url, bool follow_redir
   set(CURLOPT_SSL_VERIFYPEER, 1L); set(CURLOPT_SSL_VERIFYHOST, 2L);
   if (const char* path = ca_path()) set(CURLOPT_CAINFO, path);
   set(CURLOPT_ACCEPT_ENCODING, "identity");
-  set(CURLOPT_USERAGENT, "PS5React/0.1");
+  set(CURLOPT_USERAGENT, "ReactOnAnything/0.1");
   set(CURLOPT_CONNECTTIMEOUT, 10L);
   set(CURLOPT_LOW_SPEED_LIMIT, 1L); set(CURLOPT_LOW_SPEED_TIME, 30L);
   set(CURLOPT_TCP_KEEPALIVE, 1L);

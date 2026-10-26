@@ -2,13 +2,13 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Additional attribution term: see LICENSE-ATTRIBUTION.
 import {useEffect, useState} from 'react';
-import {View, Text, Notifications, Linking, BackHandler, Display} from '@ps5-react/core';
+import {View, Text, Notifications, Linking, BackHandler, Display} from '@react-on-anything/core';
 import {Panel, Field, Button, Status, attempt, body} from '../ui.jsx';
 
 const REPO = 'https://github.com/half144/ps5-react';
 
 const ACTIONS = [
-  ['Send notification', () => Notifications.show('Hello from System Explorer', 'Sent with PS5 React')
+  ['Send notification', () => Notifications.show('Hello from System Explorer', 'Sent with React on Anything')
     ? 'Notification sent' : 'The host could not show the notification'],
   ['Open GitHub', () => (Linking.openURL(REPO) ? `Opened ${REPO}` : 'The host could not open the browser')],
   ['Exit app', () => { BackHandler.exitApp(); return 'Exiting…'; }],

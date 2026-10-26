@@ -20,7 +20,7 @@ Apps do not track focus indices.
 
 ```jsx
 import {useState} from 'react';
-import {AppRegistry, View, Text, FocusScope} from '@ps5-react/core';
+import {AppRegistry, View, Text, FocusScope} from '@react-on-anything/core';
 
 const items = ['Play', 'Settings', 'About'];
 
@@ -64,7 +64,7 @@ AppRegistry.registerComponent('menu', () => Menu);
 
 The input protocol is versioned on its own; it is not the native API's ABI
 version ([NATIVE-API.md](NATIVE-API.md#contract)).
-`globalThis.__ps5ReactDispatch(action)` receives `up`, `down`, `left`, `right`
+`globalThis.__roaDispatch(action)` receives `up`, `down`, `left`, `right`
 (the D-pad and the left stick, with the platform's hold-to-repeat), `confirm`,
 `back`, and, since input protocol v3, `l1`, `r1`, `l2`, `r2`, `triangle`, `square`, and `options`
 (one action per press, no repeat). For input protocol v1 compatibility the runtime also
@@ -76,13 +76,13 @@ Options (O on desktop) is an action like the buttons above; the PS button (Escap
 desktop) is how the user leaves. A media app uses Options for its settings, as the
 system apps do.
 
-Since input protocol v5, hosts also report the touchpad's first finger: `__ps5ReactTouch(x, y)`
-with its position 0..1 across and down the pad each frame it touches, and `__ps5ReactTouch(null)`
+Since input protocol v5, hosts also report the touchpad's first finger: `__roaTouch(x, y)`
+with its position 0..1 across and down the pad each frame it touches, and `__roaTouch(null)`
 once when it lifts (the PS5 reads the DualSense; the desktop, a controller's touchpad through SDL).
 See [Touchpad](#touchpad).
 
 Since input protocol v6, a host with a touchscreen (the Switch) reports its first finger too:
-`__ps5ReactScreenTouch(x, y)` in screen px each frame it touches, and `__ps5ReactScreenTouch(null)`
+`__roaScreenTouch(x, y)` in screen px each frame it touches, and `__roaScreenTouch(null)`
 once when it lifts. The touchscreen works as on a phone, detached from focus:
 
 - A finger resting on a focusable element shows it pressed after 80 ms; lifting it there taps it: it
@@ -116,7 +116,7 @@ The focus manager does not move on these buttons: they go to the enclosing
 and to `useController`.
 
 Once per frame, after the pump and before the commit, hosts also call
-`globalThis.__ps5ReactFrame(elapsedMs)` with the time the frame advances (on the
+`globalThis.__roaFrame(elapsedMs)` with the time the frame advances (on the
 PS5 a whole number of 60 Hz vblanks). Focus scrolling steps there, so it moves on
 every presented frame; a timer drifts against the display and skips or doubles
 frames.
@@ -159,7 +159,7 @@ Pressing the touchpad stays the `touchpad` button of `useGamepad`.
 
 ## Focusable elements
 
-`View`, `Image`, and `Pressable` from `@ps5-react/core` accept:
+`View`, `Image`, and `Pressable` from `@react-on-anything/core` accept:
 
 | Prop | Meaning |
 | --- | --- |
@@ -354,7 +354,7 @@ rectangles.
   `whileFocus` and `whilePress`; animation classes with `transition` work the same.
 
 The compiler decides from the JSX attributes it sees: `focusable` or `onPress`
-written on the element, or `Pressable` imported from `@ps5-react/core`. A
+written on the element, or `Pressable` imported from `@react-on-anything/core`. A
 spread such as `{...focusProps}` does not count, so pass `focused` explicitly
 there (see [custom components](#custom-focusable-components)).
 
@@ -447,7 +447,7 @@ React work on the PS5 for a page of posters. `Screens` keeps each page it has
 shown mounted instead, and brings it back with its state, scroll and focus:
 
 ```jsx
-import {Screen, Screens, useIsScreenActive} from '@ps5-react/core';
+import {Screen, Screens, useIsScreenActive} from '@react-on-anything/core';
 
 <Screens active={page} focusKey="content" onBack={() => focus('tabs')} preload>
   <Screen id={0}><HomePage /></Screen>
@@ -566,7 +566,7 @@ already contains `focusable={false}`, so the `View` does not register a second
 time; pass `focused` and `pressed` explicitly for the variants:
 
 ```jsx
-import {View, Text, useFocusable} from '@ps5-react/core';
+import {View, Text, useFocusable} from '@react-on-anything/core';
 
 export function Toggle({label, on, onChange, focusKey}) {
   const {focused, pressed, focusProps} = useFocusable({focusKey, onPress: () => onChange(!on)});

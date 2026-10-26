@@ -1,10 +1,10 @@
 # Remote images
 
-`<Image>` from `@ps5-react/core` draws bundled assets (imported files, baked
+`<Image>` from `@react-on-anything/core` draws bundled assets (imported files, baked
 into the executable) and images from `http://` or `https://` URLs:
 
 ```jsx
-import {Image} from '@ps5-react/core';
+import {Image} from '@react-on-anything/core';
 
 <Image source={{uri: game.coverUrl}} resizeMode="cover"
   className="w-[150px] h-[200px] rounded-md bg-surface" />
@@ -124,8 +124,8 @@ the download buffers (128 MiB at the least on the PS5; see
 [DOWNLOAD-PERFORMANCE.md](DOWNLOAD-PERFORMANCE.md#framework-constraints)).
 Responses and decodes allocate with `malloc` and check the result, so running
 out of heap fails or retries one image instead of aborting the title. The PS5
-host logs `[PS5-REACT] memory: heap=live/size … img encoded=… decoded=…` about
-every ten seconds, followed by `[PS5-REACT] images:` with counters since launch:
+host logs `[ROA] memory: heap=live/size … img encoded=… decoded=…` about
+every ten seconds, followed by `[ROA] images:` with counters since launch:
 loads by where they were served from (`decoded-cache`, `encoded-cache`, `disk`,
 `net`), `decodes` with their average time, `shown` with the average and longest
 time from request to pixels for images an element waits on, `cancelled` loads,

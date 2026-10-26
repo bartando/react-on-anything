@@ -7,7 +7,7 @@ sound mixer and is the clock the picture follows.
 
 ```jsx
 import {useRef} from 'react';
-import {Video} from '@ps5-react/core';
+import {Video} from '@react-on-anything/core';
 
 function Player({url, onClose}) {
   const video = useRef(null);
@@ -137,7 +137,7 @@ While a track passes through:
 media server for before it opens a video:
 
 ```js
-import {AudioOutput} from '@ps5-react/core';
+import {AudioOutput} from '@react-on-anything/core';
 
 const sink = AudioOutput.capabilities();
 // {known: true, name: 'AVR-X1700H',

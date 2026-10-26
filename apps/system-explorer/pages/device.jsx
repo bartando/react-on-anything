@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Additional attribution term: see LICENSE-ATTRIBUTION.
 import {useState} from 'react';
-import {View, Platform, DeviceInfo, Users} from '@ps5-react/core';
+import {View, Platform, DeviceInfo, Users} from '@react-on-anything/core';
 import {Panel, Field, Button, Status, attempt} from '../ui.jsx';
 import {bytes, known, fixed} from '../format.js';
 

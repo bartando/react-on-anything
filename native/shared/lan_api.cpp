@@ -63,7 +63,7 @@ JSValue poll(JSContext* ctx, JSValueConst, int, JSValueConst*) {
 }
 } // namespace
 
-JSValue ps5_react_lan_api(JSContext* ctx) {
+JSValue roa_lan_api(JSContext* ctx) {
   JSValue api = JS_NewObject(ctx);
   JS_SetPropertyStr(ctx, api, "broadcast", JS_NewCFunction(ctx, broadcast, "broadcast", 4));
   JS_SetPropertyStr(ctx, api, "cancel", JS_NewCFunction(ctx, cancel, "cancel", 1));

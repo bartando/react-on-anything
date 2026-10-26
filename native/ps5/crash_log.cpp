@@ -57,7 +57,7 @@ char* hex(char* out, std::uint64_t value) {
 void fatal(int signal, siginfo_t* info, void* context) {
   char line[160];
   char* at = line;
-  const char prefix[] = "[PS5-REACT] fatal signal ";
+  const char prefix[] = "[ROA] fatal signal ";
   std::memcpy(at, prefix, sizeof prefix - 1); at += sizeof prefix - 1;
   if (signal >= 10) *at++ = static_cast<char>('0' + signal / 10);
   *at++ = static_cast<char>('0' + signal % 10);
@@ -93,7 +93,7 @@ void log_modules() {
     info.size = sizeof info;
     if (sceKernelGetModuleInfo(handles[i], &info) != 0) continue;
     char line[400];
-    const int n = std::snprintf(line, sizeof line, "[PS5-REACT] module %s text=%p+0x%x\n", info.name,
+    const int n = std::snprintf(line, sizeof line, "[ROA] module %s text=%p+0x%x\n", info.name,
                                 info.segment_count ? info.segments[0].address : nullptr, info.segment_count ? info.segments[0].size : 0u);
     if (n > 0) { append(line, static_cast<std::size_t>(n)); __real_sceKernelDebugOutText(0, line); }
   }

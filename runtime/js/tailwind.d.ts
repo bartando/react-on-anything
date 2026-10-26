@@ -21,7 +21,7 @@ interface ClassNameProps {
   disabled?: boolean;
 }
 
-/** D-pad focus on `View`, `Image`, and `Pressable` from `@ps5-react/core` (docs/NAVIGATION.md). */
+/** D-pad focus on `View`, `Image`, and `Pressable` from `@react-on-anything/core` (docs/NAVIGATION.md). */
 interface FocusProps {
   /** Takes part in D-pad navigation; implied by `onPress` and by `Pressable`. */
   focusable?: boolean;

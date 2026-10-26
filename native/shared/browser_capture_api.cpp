@@ -50,7 +50,7 @@ JSValue poll(JSContext* ctx, JSValueConst, int, JSValueConst*) {
   return out;
 }
 }
-JSValue ps5_react_browser_capture_api(JSContext* ctx) {
+JSValue roa_browser_capture_api(JSContext* ctx) {
   JSValue api = JS_NewObject(ctx);
   JS_SetPropertyStr(ctx, api, "capture", JS_NewCFunction(ctx, capture, "capture", 3));
   JS_SetPropertyStr(ctx, api, "cancel", JS_NewCFunction(ctx, cancel, "cancel", 1));

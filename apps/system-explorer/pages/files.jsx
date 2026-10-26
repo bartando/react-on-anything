@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Additional attribution term: see LICENSE-ATTRIBUTION.
 import {useState} from 'react';
-import {View, Text, ScrollView, FileSystem, FocusScope} from '@ps5-react/core';
+import {View, Text, ScrollView, FileSystem, FocusScope} from '@react-on-anything/core';
 import {Panel, Field, Button, Label, Status, attempt, body, mono} from '../ui.jsx';
 import {bytes} from '../format.js';
 

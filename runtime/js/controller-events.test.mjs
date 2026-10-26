@@ -30,19 +30,19 @@ test('a watcher sees the buttons held when it started as held, not pressed, and 
   const first = [], late = [];
   const stopFirst = source.watch((next, events) => first.push(...brief(events)));
   state = pad(['touchpad', 'l3']);
-  globalThis.__ps5ReactFrame(16);
+  globalThis.__roaFrame(16);
   // Started by a press it should not see again: l3 is held when this one starts.
   const stopLate = source.watch((next, events, elapsedMs) => { frames.push(elapsedMs); late.push(...brief(events)); });
   state = pad(['l3']);
-  globalThis.__ps5ReactFrame(20);
+  globalThis.__roaFrame(20);
   state = pad([]);
-  globalThis.__ps5ReactFrame(16);
+  globalThis.__roaFrame(16);
   assert.deepEqual(first, ['press l3', 'release touchpad 36', 'release l3 36']);
   assert.deepEqual(late, ['release touchpad 20', 'release l3 36']);
   assert.deepEqual(frames, [20, 16]);
   stopFirst();
   stopLate();
   state = pad(['cross']);
-  globalThis.__ps5ReactFrame(16);
+  globalThis.__roaFrame(16);
   assert.equal(first.length + late.length, 5);
 });

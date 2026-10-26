@@ -3,7 +3,7 @@
     "jsx": "react-jsx",
     "baseUrl": ".",
     "paths": {
-      "@ps5-react/core": [
+      "@react-on-anything/core": [
         "runtime/js/index.js"
       ],
       "embedded-react": [

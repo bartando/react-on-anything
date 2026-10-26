@@ -18,7 +18,7 @@ def main():
     threading.Thread(target=server.serve_forever, daemon=True).start()
     results = []
     try:
-        with tempfile.TemporaryDirectory(prefix="ps5-react-network-bench-") as temporary:
+        with tempfile.TemporaryDirectory(prefix="react-on-anything-network-bench-") as temporary:
             directory = Path(temporary)
             binary = compile_client(directory)
             for connections in (1, 2, 4, 8, 16):

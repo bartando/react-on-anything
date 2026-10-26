@@ -1,7 +1,7 @@
 // Copyright (C) 2026 half144 and PS5 React contributors
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Additional attribution term: see LICENSE-ATTRIBUTION.
-// Babel plugin: `className` on any JSX element and `tw` templates from '@ps5-react/core' become
+// Babel plugin: `className` on any JSX element and `tw` templates from '@react-on-anything/core' become
 // literal style objects. Conditional classes become conditional style entries; state variants read
 // the element's prop of the same name, except focused/pressed on a focusable element without that
 // prop, which read its own focus state through a style function. Animation classes turn a core
@@ -11,7 +11,7 @@ import {ClassError} from './compile.mjs';
 import {byPriority, motionProps, splitTarget} from './motion.mjs';
 import {UtilityError} from './utilities.mjs';
 
-const CORE = '@ps5-react/core';
+const CORE = '@react-on-anything/core';
 const MOTION = '__ps5Motion';
 const MOTION_PROPS = ['initial', 'animate', 'exit', 'transition'];
 const WHILE = {focused: 'whileFocus', pressed: 'whilePress'};
@@ -224,7 +224,7 @@ export default function tailwindPlugin({types: t}, {compiler}) {
     return t.cloneNode(value, true);
   }
 
-  /** The name a binding imports from '@ps5-react/core', or null. */
+  /** The name a binding imports from '@react-on-anything/core', or null. */
   function coreImport(scope, name) {
     const binding = scope.getBinding(name);
     if (binding?.kind !== 'module' || binding.path.parent.source.value !== CORE) return null;
@@ -280,7 +280,7 @@ export default function tailwindPlugin({types: t}, {compiler}) {
   }
 
   return {
-    name: 'ps5-react-tailwind',
+    name: 'react-on-anything-tailwind',
     visitor: {
       Program: {
         enter(_, state) {

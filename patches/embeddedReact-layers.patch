@@ -10,7 +10,7 @@ engine/core/renderer_internal.h, engine/include/er_scene.h,
 engine/include/native_renderer.h, engine/scene/compositor.c,
 engine/scene/er_node_internal.h and engine/tests/rendering/CMakeLists.txt; new
 file engine/tests/rendering/test_layers.c.
-Not proposed upstream: PS5 React maintains this change here.
+Not proposed upstream: React on Anything maintains this change here.
 
 A crossfade between two full-screen images rasterized both images and every
 translucent node over them on each frame: at 3840x2160 about 30 ms of raster

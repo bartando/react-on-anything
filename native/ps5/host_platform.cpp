@@ -91,7 +91,7 @@ public:
       resolved_ = true;
       void* handle = dlopen(module_, RTLD_LAZY);
       void* symbol = handle ? dlsym(handle, name_) : nullptr;
-      if (!symbol) async_log::write("[PS5-REACT] %s unavailable from %s", name_, module_);
+      if (!symbol) async_log::write("[ROA] %s unavailable from %s", name_, module_);
       function_ = reinterpret_cast<Function>(symbol);
     }
     return function_;
@@ -116,7 +116,7 @@ constexpr const char* kLanguages[] = {
 bool user_name(int id, char* name, std::size_t size) {
   const int result = sceUserServiceGetUserName(id, name, size);
   if (result != 0) {
-    async_log::write("[PS5-REACT] sceUserServiceGetUserName=0x%08x", static_cast<unsigned>(result));
+    async_log::write("[ROA] sceUserServiceGetUserName=0x%08x", static_cast<unsigned>(result));
     name[0] = '\0';
   }
   return result == 0;
@@ -140,7 +140,7 @@ bool resolve_path(const char* path, char* out, std::size_t size) {
   return resolve_filesystem_path(path, out, size);
 }
 
-void trace(const char* call) { async_log::write("[PS5-REACT] native %s", call); }
+void trace(const char* call) { async_log::write("[ROA] native %s", call); }
 
 // libkernel's sce* file calls return SCE_KERNEL_ERROR_* (0x8002xxxx, errno in the low bits).
 bool sce_failed(int result) {
@@ -288,7 +288,7 @@ void device_info(DeviceInfo& info) {
   info.process_time = static_cast<std::int64_t>(sceKernelGetProcessTime());
   int language = -1;
   if (const int result = sceSystemServiceParamGetInt(kSystemParamLanguage, &language); result != 0)
-    async_log::write("[PS5-REACT] sceSystemServiceParamGetInt=0x%08x", static_cast<unsigned>(result));
+    async_log::write("[ROA] sceSystemServiceParamGetInt=0x%08x", static_cast<unsigned>(result));
   else if (language >= 0 && language < static_cast<int>(std::size(kLanguages)))
     std::snprintf(info.language, sizeof info.language, "%s", kLanguages[language]);
 }
@@ -319,7 +319,7 @@ bool notify(const char* message, const char* sub_message) {
   NotifyRequest request{};
   std::snprintf(request.message, sizeof request.message, *sub_message ? "%s\n%s" : "%s", message, sub_message);
   const int result = sceKernelSendNotificationRequest(0, &request, sizeof request, 0);
-  if (result != 0) async_log::write("[PS5-REACT] sceKernelSendNotificationRequest=0x%08x", static_cast<unsigned>(result));
+  if (result != 0) async_log::write("[ROA] sceKernelSendNotificationRequest=0x%08x", static_cast<unsigned>(result));
   return result == 0;
 }
 
@@ -327,7 +327,7 @@ bool open_url(const char* url) {
   if (std::strncmp(url, "http://", 7) != 0 && std::strncmp(url, "https://", 8) != 0) return false;
   const int result = sceSystemServiceLaunchWebBrowser(url, nullptr);
   if (result != 0)
-    async_log::write("[PS5-REACT] sceSystemServiceLaunchWebBrowser=0x%08x", static_cast<unsigned>(result));
+    async_log::write("[ROA] sceSystemServiceLaunchWebBrowser=0x%08x", static_cast<unsigned>(result));
   return result == 0;
 }
 
@@ -359,7 +359,7 @@ void set_trigger_effect(unsigned mask, int mode, const std::uint8_t* params, std
   static int reported[4] = {1, 1, 1, 1};
   if (reported[mode] == result) return;
   reported[mode] = result;
-  async_log::write("[PS5-REACT] pad trigger effect mask=%u mode=%d [%d %d %d] -> 0x%08x", mask, mode,
+  async_log::write("[ROA] pad trigger effect mask=%u mode=%d [%d %d %d] -> 0x%08x", mask, mode,
                    count > 0 ? params[0] : 0, count > 1 ? params[1] : 0, count > 2 ? params[2] : 0,
                    static_cast<unsigned>(result));
 }
@@ -402,7 +402,7 @@ bool host_platform_read_touch(float* x, float* y) {
     sceUserServiceGetInitialUser(&user);
     // The handle Pad::open made: one standard pad per user.
     touch_handle = scePadGetHandle(user, 0, 0);
-    async_log::write("[PS5-REACT] touchpad handle=%d", touch_handle);
+    async_log::write("[ROA] touchpad handle=%d", touch_handle);
   }
   PadState state{};
   if (touch_handle < 0 || scePadReadState(touch_handle, &state) < 0) return false;
@@ -413,7 +413,7 @@ bool host_platform_read_touch(float* x, float* y) {
     touch_from[0] = finger.x;
     touch_from[1] = finger.y;
   } else if (!down && touching) {
-    async_log::write("[PS5-REACT] touch from %u,%u to %u,%u", touch_from[0], touch_from[1], touch_to[0], touch_to[1]);
+    async_log::write("[ROA] touch from %u,%u to %u,%u", touch_from[0], touch_from[1], touch_to[0], touch_to[1]);
   }
   if (down) {
     touch_to[0] = finger.x;
@@ -430,5 +430,5 @@ void host_platform_tick(std::int64_t now_us) {
   if (!keeping_awake || now_us < next_power_tick_us) return;
   next_power_tick_us = now_us + kPowerTickIntervalUs;
   if (const int result = sceSystemServicePowerTick(); result != 0)
-    async_log::write("[PS5-REACT] sceSystemServicePowerTick=0x%08x", static_cast<unsigned>(result));
+    async_log::write("[ROA] sceSystemServicePowerTick=0x%08x", static_cast<unsigned>(result));
 }

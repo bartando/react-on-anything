@@ -1,10 +1,10 @@
 // Copyright (C) 2026 half144 and PS5 React contributors
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Additional attribution term: see LICENSE-ATTRIBUTION.
-// Native API contract (ABI v16) between the hosts and `@ps5-react/core`. The input actions hosts
-// pass to `__ps5ReactDispatch` are a separate contract with its own version (runtime/js/input.js).
+// Native API contract (ABI v16) between the hosts and `@react-on-anything/core`. The input actions hosts
+// pass to `__roaDispatch` are a separate contract with its own version (runtime/js/input.js).
 //
-// host_api.cpp (shared) installs `globalThis.__ps5ReactNative` through
+// host_api.cpp (shared) installs `globalThis.__roaNative` through
 // ErRuntimeConfig.install_host_globals and implements the filesystem with POSIX
 // (mount listing excepted).
 // Each platform implements the `host::` functions below. Everything runs on the
@@ -144,16 +144,16 @@ extern "C" {
 constexpr std::size_t kMaxReadBytes = 8 * 1024 * 1024;
 
 // Shared (host_api.cpp).
-void ps5_react_install_host_api(JSContext* ctx);
-bool ps5_react_exit_requested();
+void roa_install_host_api(JSContext* ctx);
+bool roa_exit_requested();
 // ABI v11: the host reports the rate it presents at, and after each frame takes the rate
 // display.setRefreshRate asked for, 0 when there is none, to switch to before the next one.
-void ps5_react_set_refresh_rate(int hz);
-int ps5_react_take_refresh_request();
-// Calls `globalThis.__ps5ReactFrame(elapsedMs)` (runtime/js/frame.js) once per frame, after
+void roa_set_refresh_rate(int hz);
+int roa_take_refresh_request();
+// Calls `globalThis.__roaFrame(elapsedMs)` (runtime/js/frame.js) once per frame, after
 // er_runtime_pump() and before er_commit(): per-frame motion steps by the time the frame advances
 // on screen. False when it threw.
-bool ps5_react_frame(JSContext* ctx, double elapsed_ms);
+bool roa_frame(JSContext* ctx, double elapsed_ms);
 
 // Latest controller state, set by the host once per frame before er_runtime_pump().
 struct GamepadState {
@@ -166,7 +166,7 @@ inline constexpr const char* kButtonNames[] = {
   "up", "down", "left", "right", "cross", "circle", "triangle", "square",
   "l1", "r1", "l2", "r2", "l3", "r3", "options", "touchpad",
 };
-void ps5_react_set_gamepad(const GamepadState& state);
+void roa_set_gamepad(const GamepadState& state);
 
 // Per platform (native/ps5/host_platform.cpp, native/desktop/host_platform.cpp).
 namespace host {
@@ -248,30 +248,30 @@ void close_bitstream();
 } // namespace host
 
 // ABI v2: synchronous native task submission/polling; I/O runs off-thread.
-JSValue ps5_react_network_api(JSContext* ctx);
+JSValue roa_network_api(JSContext* ctx);
 // ABI v3: remote images fetched and decoded off-thread, registered with the engine on poll.
-JSValue ps5_react_image_api(JSContext* ctx);
+JSValue roa_image_api(JSContext* ctx);
 // Starts the image workers (after network::start) with the disk cache in the app's data directory.
-bool ps5_react_start_images();
+bool roa_start_images();
 // Unregisters every remote image from the engine, then stops the image workers and frees them.
-void ps5_react_stop_images();
+void roa_stop_images();
 // ABI v5: sounds the app imports (baked by tools/bundle.mjs), mixed on an audio thread.
-JSValue ps5_react_sound_api(JSContext* ctx);
+JSValue roa_sound_api(JSContext* ctx);
 // Decodes the baked sounds and opens the audio output; false (silent) when the app has no sounds or
 // the output fails. Start before the bundle runs, stop after the runtime shuts down.
-bool ps5_react_start_sound();
-void ps5_react_stop_sound();
+bool roa_start_sound();
+void roa_stop_sound();
 
 // ABI v5 additive archive tasks: extract(sources, destination, maxBytes, password?), inspect(sources), cancel(id), poll().
-JSValue ps5_react_archive_api(JSContext* ctx);
+JSValue roa_archive_api(JSContext* ctx);
 // ABI v5 additive package installs: install(path, name), cancel(id), poll().
-JSValue ps5_react_package_api(JSContext* ctx);
+JSValue roa_package_api(JSContext* ctx);
 
 // ABI v7: filename-bound browser capture tasks (PS5 only).
-JSValue ps5_react_browser_capture_api(JSContext* ctx);
+JSValue roa_browser_capture_api(JSContext* ctx);
 // ABI v9: UDP broadcast queries on the local network (lan.hpp).
-JSValue ps5_react_lan_api(JSContext* ctx);
+JSValue roa_lan_api(JSContext* ctx);
 // ABI v10: video playback (video_api.hpp).
-JSValue ps5_react_video_api(JSContext* ctx);
+JSValue roa_video_api(JSContext* ctx);
 // ABI v13: the connected sink's audio capabilities (audio_output_api.cpp).
-JSValue ps5_react_audio_output_api(JSContext* ctx);
+JSValue roa_audio_output_api(JSContext* ctx);

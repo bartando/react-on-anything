@@ -37,7 +37,7 @@ export function transform(babel, compiler, source, filename) {
 export function tailwindEsbuildPlugin({appDir, render, babel}) {
   const root = resolve(appDir) + sep;
   return {
-    name: 'ps5-react-tailwind',
+    name: 'react-on-anything-tailwind',
     async setup(build) {
       const compiler = await loadCompiler(appDir, render);
       build.onLoad({filter: /\.(m?jsx?|tsx?)$/}, args => {

@@ -11,7 +11,7 @@ let batch = run => run();
 // lets image delivery measure each synchronous React commit before deciding whether to continue.
 // The frame always ends in a batch, even an empty one: leaving it flushes React work the pump left
 // queued, and without it a press waits a frame (the starter self-test fails).
-globalThis.__ps5ReactFrame = elapsedMs => {
+globalThis.__roaFrame = elapsedMs => {
   let pending = [];
   const flush = () => {
     const callbacksToRun = pending;

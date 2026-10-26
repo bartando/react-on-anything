@@ -40,13 +40,13 @@ const {registerSvgVectorLoader} = await import(pathToFileURL(resolve(here, 'asse
 const {tailwindEsbuildPlugin} = await import('./tailwind/esbuild-plugin.mjs');
 const {readWav} = await import('./wav.mjs');
 
-// Adapted for per-app outputs by PS5 React; asset baking remains upstream.
+// Adapted for per-app outputs by React on Anything; asset baking remains upstream.
 const repoRoot = resolve(here, '../../..');
 const demosDir = resolve(repoRoot, 'demos');
 const libEntry = resolve(here, 'src/embedded-react/index.js');
 const nodeModules = resolve(here, 'node_modules');
 const distDir = resolve(process.argv[4]);
-// Added by PS5 React: Tailwind classes compile for this render size.
+// Added by React on Anything: Tailwind classes compile for this render size.
 const render = {width: Number(process.argv[5]), height: Number(process.argv[6])};
 
 const DEFAULT_DEMO = 'thermostat';
@@ -71,9 +71,9 @@ if (!existsSync(entry)) {
 // recorded, so it gets baked below. Only what the app imports is baked.
 const images = new Map(); // name -> path
 const fonts = new Map(); // family -> path
-const sounds = new Map(); // name -> {rate, channels, samples} (added by PS5 React)
+const sounds = new Map(); // name -> {rate, channels, samples} (added by React on Anything)
 
-// 16-bit PCM WAV, mono or stereo: decoded here so the hosts only copy samples (added by PS5 React).
+// 16-bit PCM WAV, mono or stereo: decoded here so the hosts only copy samples (added by React on Anything).
 function decodeWav(path) {
   const {rate, channels, bits, samples} = readWav(path);
   if (bits !== 16 || channels > 2 || rate < 8000 || rate > 96000) {
@@ -139,14 +139,14 @@ await build({
   // null and every component throws. One copy, always.
   alias: {
     'embedded-react': libEntry,
-    '@ps5-react/core': resolve(dirname(fileURLToPath(import.meta.url)), '../runtime/js/index.js'),
+    '@react-on-anything/core': resolve(dirname(fileURLToPath(import.meta.url)), '../runtime/js/index.js'),
     react: resolve(nodeModules, 'react'),
     'react-reconciler': resolve(nodeModules, 'react-reconciler'),
     scheduler: resolve(nodeModules, 'scheduler'),
   },
   nodePaths: [nodeModules],
   plugins: [
-    // Added by PS5 React: build-time className/tw compilation for the app's sources.
+    // Added by React on Anything: build-time className/tw compilation for the app's sources.
     tailwindEsbuildPlugin({appDir: demoDir, render, babel: {
       core: require('@babel/core'),
       syntaxJsx: require('@babel/plugin-syntax-jsx').default,
@@ -204,14 +204,14 @@ console.log(
     `  fonts: ${fontDesc}`,
 );
 
-// Added by PS5 React: imported WAVs -> sounds.generated.c (native/shared/baked_sounds.h), always written.
+// Added by React on Anything: imported WAVs -> sounds.generated.c (native/shared/baked_sounds.h), always written.
 const entries = [...sounds.entries()];
 writeFileSync(resolve(distDir, 'sounds.generated.c'), [
   '#include "baked_sounds.h"',
   ...entries.map(([, {samples}], i) => `static const int16_t sound_${i}[] = {${samples.join(',')}};`),
-  `const BakedSound ps5_react_sounds[] = {${entries.length ? entries.map(([name, {rate, channels, samples}], i) =>
+  `const BakedSound roa_sounds[] = {${entries.length ? entries.map(([name, {rate, channels, samples}], i) =>
     `{${JSON.stringify(name)}, sound_${i}, ${Math.floor(samples.length / channels)}, ${rate}, ${channels}}`).join(',\n  ') : '{0}'}};`,
-  `const uint32_t ps5_react_sound_count = ${entries.length};`,
+  `const uint32_t roa_sound_count = ${entries.length};`,
   '',
 ].join('\n'));
 console.log(`Baked ${entries.length} sound(s)${entries.length ? `: ${entries.map(([name]) => name).join(', ')}` : ''}`);

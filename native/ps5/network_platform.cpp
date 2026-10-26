@@ -7,7 +7,7 @@
 #include "filesystem_access.hpp"
 #include "platform/ps5/system.hpp"
 #include <unistd.h>
-#if PS5_REACT_NETWORKING
+#if ROA_NETWORKING
 extern "C" {
 int sceNetInit(void);
 int sceNetTerm(void);
@@ -24,7 +24,7 @@ bool platform_start(std::string& error) {
     error = "native networking cannot read the system certificate store"; return false;
   }
   initialized = sceNetInit() == 0;
-  pool = sceNetPoolCreate("ps5-react-http", 1024*1024, 0);
+  pool = sceNetPoolCreate("react-on-anything-http", 1024*1024, 0);
   if (pool < 0) {
     if (initialized) sceNetTerm(); initialized = false;
     error = "native networking could not create its libSceNet pool"; return false;
@@ -45,7 +45,7 @@ void platform_log(const char* line) {
   hui_heap_stats(&live, &peak, &blocks, &failures);
   hui_heap_capacity(&size, nullptr, nullptr);
   const images::Memory image = images::memory();
-  hui::sys::log("[PS5-REACT] %s heap=%zu/%zuMiB peak=%zuMiB failed=%zu img=%zu+%zuMiB", line, live >> 20, size >> 20,
+  hui::sys::log("[ROA] %s heap=%zu/%zuMiB peak=%zuMiB failed=%zu img=%zu+%zuMiB", line, live >> 20, size >> 20,
                 peak >> 20, failures, image.encoded >> 20, image.decoded >> 20);
 }
 }

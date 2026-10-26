@@ -132,14 +132,14 @@ def main():
     table = ['#include "layouts.h"']
     for i, directory in enumerate(layout_dirs):
         js_bundle = (directory / "app.bundle.js").read_bytes()
-        table += [f"void ps5_react_register_assets_{i}(void);",
+        table += [f"void roa_register_assets_{i}(void);",
                   f"static const char bundle_{i}[] = {{" + ",".join(str(x) for x in js_bundle) + ",0};"]
-    table += ["const Ps5ReactLayout ps5_react_layouts[] = {" + ",".join(
-                  f"{{{w}, {h}, {sw}, {sh}, bundle_{i}, sizeof bundle_{i} - 1, ps5_react_register_assets_{i}}}"
+    table += ["const RoaLayout roa_layouts[] = {" + ",".join(
+                  f"{{{w}, {h}, {sw}, {sh}, bundle_{i}, sizeof bundle_{i} - 1, roa_register_assets_{i}}}"
                   for i, (w, h, sw, sh) in enumerate(app_layouts)) + "};",
-              f"const unsigned ps5_react_layout_count = {len(app_layouts)};", ""]
+              f"const unsigned roa_layout_count = {len(app_layouts)};", ""]
     layouts_c.write_text("\n".join(table))
-    layout_assets = {directory / "assets.generated.c": [f"-Der_register_assets=ps5_react_register_assets_{i}"]
+    layout_assets = {directory / "assets.generated.c": [f"-Der_register_assets=roa_register_assets_{i}"]
                      for i, directory in enumerate(layout_dirs)}
     definitions = next(line.split("=", 1)[1] for line in
                        (cross / "bridge/engine/CMakeFiles/embedded-react.dir/flags.make").read_text().splitlines()
@@ -313,9 +313,9 @@ def main():
         shutil.copy2(source, notices / entry["file"])
     shutil.copy2(ROOT / "licenses/archives-SOURCES.json", notices / "archives-SOURCES.json")
     for name, source in {
-        "ps5-react-LICENSE": ROOT / "LICENSE",
-        "ps5-react-LICENSE-ATTRIBUTION": ROOT / "LICENSE-ATTRIBUTION",
-        "ps5-react-NOTICE": ROOT / "NOTICE",
+        "react-on-anything-LICENSE": ROOT / "LICENSE",
+        "react-on-anything-LICENSE-ATTRIBUTION": ROOT / "LICENSE-ATTRIBUTION",
+        "react-on-anything-NOTICE": ROOT / "NOTICE",
         "ps5-homebrew-ui-LICENSE": hui / "LICENSE",
         "embedded-react-LICENSE": er / "LICENSE",
         "embedded-react-engine-LICENSE": er / "engine/LICENSE",

@@ -292,7 +292,7 @@ void Player::demux_main() {
       av_dict_set(&settings, "reconnect_on_network_error", "1", 0);
       av_dict_set(&settings, "reconnect_delay_max", "10", 0);
       av_dict_set(&settings, "rw_timeout", "15000000", 0);
-      av_dict_set(&settings, "user_agent", "PS5React", 0);
+      av_dict_set(&settings, "user_agent", "ReactOnAnything", 0);
       std::string headers;
       for (const std::string& header : options_.headers) headers += header + "\r\n";
       if (!headers.empty()) av_dict_set(&settings, "headers", headers.c_str(), 0);

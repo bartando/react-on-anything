@@ -39,10 +39,10 @@ int output_lines() {
   OutputMode mode = {};
   const int result = sceVideoOutGetCurrentOutputMode_(kMainOutput, &mode);
   if (result != 0) {
-    async_log::write("[PS5-REACT] output mode unavailable: 0x%08x", static_cast<unsigned>(result));
+    async_log::write("[ROA] output mode unavailable: 0x%08x", static_cast<unsigned>(result));
     return 0;
   }
-  async_log::write("[PS5-REACT] output mode resolution=0x%02x refresh=0x%02x", static_cast<unsigned>(mode.resolution),
+  async_log::write("[ROA] output mode resolution=0x%02x refresh=0x%02x", static_cast<unsigned>(mode.resolution),
                    static_cast<unsigned>(mode.refresh));
   return lines(mode.resolution);
 }

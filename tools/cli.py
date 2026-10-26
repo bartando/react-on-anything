@@ -36,7 +36,7 @@ def sandbox(app):
 
 
 def preview_env(app):
-    return {**os.environ, "PS5_REACT_SANDBOX": str(sandbox(app))}
+    return {**os.environ, "ROA_SANDBOX": str(sandbox(app))}
 
 
 def preview_layout(config, resolution=None):
@@ -47,7 +47,7 @@ def preview_layout(config, resolution=None):
     return next(layout for layout in candidates if f"{layout[1]}p" == resolution)
 
 
-def desktop(app, test=False, target="ps5-react-preview", resolution=None):
+def desktop(app, test=False, target="react-on-anything-preview", resolution=None):
     er = dependency("embeddedReact")
     _, config, generated = bundle(app, er)
     layout = preview_layout(config, resolution)
@@ -62,12 +62,12 @@ def desktop(app, test=False, target="ps5-react-preview", resolution=None):
     run(["cmake", "--build", build, "--target", target, "-j", "6"], log=build / "build.log")
     # RAR sets extract in this separate program, which the preview finds beside itself.
     build_host(build / "rar-extract")
-    command = [build / "ps5-react-preview", directory / "app.bundle.js"]
+    command = [build / "react-on-anything-preview", directory / "app.bundle.js"]
     if test:
         run(["node", "--test", *sorted((ROOT / "tools/tailwind").glob("*.test.mjs")),
                 *sorted((ROOT / "runtime/js/motion").glob("*.test.mjs")),
                 *sorted((ROOT / "runtime/js/focus").glob("*.test.mjs")),
-                *sorted((ROOT / "runtime/js").glob("*.test.mjs"))], env={**os.environ, "PS5_REACT_ER": str(er)},
+                *sorted((ROOT / "runtime/js").glob("*.test.mjs"))], env={**os.environ, "ROA_ER": str(er)},
             log=ROOT / ".build/tailwind-test.log")
         if app != ROOT / "apps/starter":
             raise ValueError("The scripted UI test belongs to starter; use preview for other apps")
@@ -85,7 +85,7 @@ def desktop(app, test=False, target="ps5-react-preview", resolution=None):
 
 
 def doctor():
-    print("PS5 React 0.1 — macOS developer environment")
+    print("React on Anything 0.1 — macOS developer environment")
     missing = []
     for command in ("python3", "node", "npm", "cmake", "git", "clang++"):
         path = shutil.which(command)
@@ -232,7 +232,7 @@ def render_worker_parity(command, directory, app):
     single = directory / "single-core"
     shutil.rmtree(single, ignore_errors=True)
     single.mkdir()
-    run(command, cwd=single, env={**preview_env(app), "PS5_REACT_RENDER_WORKERS": "1"})
+    run(command, cwd=single, env={**preview_env(app), "ROA_RENDER_WORKERS": "1"})
     run(command, cwd=directory, env=preview_env(app))
     snapshots = sorted(path.name for path in single.glob("texture-*.ppm"))
     if not snapshots: raise RuntimeError("The single-core self-test wrote no snapshots")
@@ -247,5 +247,5 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         print("Preview stopped.")
     except (ValueError, RuntimeError, FileNotFoundError, subprocess.CalledProcessError) as error:
-        print(f"PS5 React: {error}", file=sys.stderr)
+        print(f"React on Anything: {error}", file=sys.stderr)
         sys.exit(1)

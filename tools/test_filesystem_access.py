@@ -28,7 +28,7 @@ def main():
     print("PASS: resident/helper selection, partial transfers, rejection and data proof")
     headers = build / "root-test-headers"
     (headers / "platform/ps5").mkdir(parents=True, exist_ok=True)
-    (headers / "app_config.hpp").write_text('#define PS5_REACT_CONSOLE_FILESYSTEM 1\n#define PS5_REACT_TITLE "PPSA99058"\n')
+    (headers / "app_config.hpp").write_text('#define ROA_CONSOLE_FILESYSTEM 1\n#define ROA_TITLE "PPSA99058"\n')
     (headers / "platform/ps5/system.hpp").write_text(
         '#pragma once\nnamespace hui::sys { template<class... T> void log(const char*, T...) {} }\n')
     root_test = build / "test-filesystem-roots"

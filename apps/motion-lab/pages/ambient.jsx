@@ -1,7 +1,7 @@
 // Copyright (C) 2026 half144 and PS5 React contributors
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Additional attribution term: see LICENSE-ATTRIBUTION.
-import {View, Text, motion} from '@ps5-react/core';
+import {View, Text, motion} from '@react-on-anything/core';
 import {Page, caption, code} from '../ui.jsx';
 
 const breathe = {duration: 2.8, ease: 'easeInOut', repeat: Infinity, repeatType: 'reverse'};

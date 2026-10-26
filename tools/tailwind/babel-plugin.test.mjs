@@ -10,7 +10,7 @@ import {createCompiler} from './compile.mjs';
 import {transform} from './esbuild-plugin.mjs';
 
 const root = resolve(fileURLToPath(import.meta.url), '../../..');
-const er = process.env.PS5_REACT_ER ?? resolve(root, '.deps/embeddedReact');
+const er = process.env.ROA_ER ?? resolve(root, '.deps/embeddedReact');
 const require = createRequire(resolve(er, 'bridges/quickjs/js/package.json'));
 const babel = {core: require('@babel/core'), syntaxJsx: require('@babel/plugin-syntax-jsx').default};
 const compiler = createCompiler({renderWidth: 1280, renderHeight: 720, appDir: '/app',
@@ -53,8 +53,8 @@ test('relative leading in a branch uses the static font size', () => {
     /a \? \{ lineHeight: 20 \} : null/);
 });
 
-test('tw templates from @ps5-react/core compile to objects', () => {
-  assert.match(compile('import {tw} from "@ps5-react/core"; const s = tw`m-1`;'), /const s = \{ margin: 4 \};/);
+test('tw templates from @react-on-anything/core compile to objects', () => {
+  assert.match(compile('import {tw} from "@react-on-anything/core"; const s = tw`m-1`;'), /const s = \{ margin: 4 \};/);
   assert.match(compile('const tw = x => x; const s = tw`m-1`;'), /tw`m-1`/);
 });
 
@@ -74,13 +74,13 @@ test('unknown classes suggest the closest valid utility', () => {
   fails('<View className="qqqq-zzzz" />;', /unknown utility$/);
 });
 
-const core = 'import {View, Text as T} from "@ps5-react/core"; ';
-const motionImport = 'import { motion as __ps5Motion } from "@ps5-react/core";';
+const core = 'import {View, Text as T} from "@react-on-anything/core"; ';
+const motionImport = 'import { motion as __ps5Motion } from "@react-on-anything/core";';
 const tween = 'transition={{ type: "tween", duration: 0.15, ease: [0.4, 0, 0.2, 1] }}';
 
 test('animation classes turn core primitives into motion components', () => {
   assert.equal(compile(`${core}<T className="p-1 animate-in fade-in translate-y-1">a</T>; <View className="animate-spin" />;`),
-    `${motionImport}import { View, Text as T } from "@ps5-react/core";<__ps5Motion.Text style={{ padding: 4 }} ` +
+    `${motionImport}import { View, Text as T } from "@react-on-anything/core";<__ps5Motion.Text style={{ padding: 4 }} ` +
     `initial={{ y: 4, opacity: 0 }} animate={{ opacity: 1, y: 4 }} ${tween}>a</__ps5Motion.Text>;` +
     '<__ps5Motion.View initial={{ rotate: 0 }} animate={{ rotate: 360 }} transition={{ type: "tween", ' +
     'duration: 0.15, ease: [0.4, 0, 0.2, 1], rotate: { type: "tween", duration: 1, ease: "linear", repeat: 1 / 0 } }} />;');
@@ -90,7 +90,7 @@ test('animation classes turn core primitives into motion components', () => {
 
 test('transition animates the opacity and transforms of variants and conditions', () => {
   assert.equal(compile(`${core}<View focused={f} className="transition bg-black scale-100 focused:scale-110 focused:bg-white" />;`),
-    `${motionImport}import { View, Text as T } from "@ps5-react/core";<__ps5Motion.View focused={f} ` +
+    `${motionImport}import { View, Text as T } from "@react-on-anything/core";<__ps5Motion.View focused={f} ` +
     'style={[{ backgroundColor: "#000" }, f ? { backgroundColor: "#fff" } : null]} initial={false} ' +
     `animate={f ? { scale: 1.1 } : { scale: 1 }} ${tween} />;`);
   assert.match(compile(`${core}<View pressed={p} focused={f} className="transition pressed:scale-95 focused:opacity-80 focused:scale-105" />;`),
@@ -101,15 +101,15 @@ test('transition animates the opacity and transforms of variants and conditions'
 
 test('classes that animate nothing leave the element untouched', () => {
   assert.equal(compile(`${core}<View focused={f} className="transition duration-300 focused:bg-white" />;`),
-    'import { View, Text as T } from "@ps5-react/core";<View focused={f} style={f ? { backgroundColor: "#fff" } : null} />;');
+    'import { View, Text as T } from "@react-on-anything/core";<View focused={f} style={f ? { backgroundColor: "#fff" } : null} />;');
 });
 
 test('animation classes fail outside core primitives and static class lists', () => {
-  fails('<View className="animate-spin" />;', /need View, Text or Image from @ps5-react\/core; .*motion\.create/);
+  fails('<View className="animate-spin" />;', /need View, Text or Image from @react-on-anything\/core; .*motion\.create/);
   fails('import {View} from "./ui"; <View className="animate-spin" />;', /motion\.create/);
   fails(`${core}<View className={on && "animate-spin"} />;`, /must be static/);
   fails(`${core}<View animate={a} className="animate-spin" />;`, /animate prop conflicts/);
-  fails('import {tw} from "@ps5-react/core"; tw`animate-spin`;', /need a JSX element/);
+  fails('import {tw} from "@react-on-anything/core"; tw`animate-spin`;', /need a JSX element/);
   assert.throws(() => compile(`${core}<View\n  className="p-1 fade-in" />;`),
     error => /add animate-in/.test(error.message) && assert.deepEqual(error.loc, {line: 2, column: 17}) === undefined);
 });
@@ -119,7 +119,7 @@ test('focusable elements without the prop read focus state through a style funct
     '<View focusable style={(_state) => [{ padding: 4 }, _state.focused ? { backgroundColor: "#fff" } : null, ' +
     '_state.pressed ? { backgroundColor: "#000" } : null]} />;');
   assert.equal(compile(`${core.replace('Text as T', 'Pressable')}<Pressable className="hover:p-1" />;`),
-    'import { View, Pressable } from "@ps5-react/core";<Pressable style={(_state) => _state.focused ? { padding: 4 } : null} />;');
+    'import { View, Pressable } from "@react-on-anything/core";<Pressable style={(_state) => _state.focused ? { padding: 4 } : null} />;');
   assert.equal(compile('<View onPress={go} className="focus-visible:p-1" />;'),
     '<View onPress={go} style={(_state) => _state.focused ? { padding: 4 } : null} />;');
   assert.match(compile('const focused = 1; <View focusable className={`${focused ? "m-1" : ""} focused:p-1`} />;'),
@@ -147,7 +147,7 @@ test('the explicit style stays last inside the style function', () => {
 
 test('focusable motion elements animate focus state with whileFocus and whilePress', () => {
   assert.equal(compile(`${core}<View focusable className="transition bg-black focused:scale-105 focused:bg-white pressed:opacity-80" />;`),
-    `${motionImport}import { View, Text as T } from "@ps5-react/core";<__ps5Motion.View focusable ` +
+    `${motionImport}import { View, Text as T } from "@react-on-anything/core";<__ps5Motion.View focusable ` +
     'style={(_state) => [{ backgroundColor: "#000" }, _state.focused ? { backgroundColor: "#fff" } : null]} initial={false} ' +
     `animate={{ scale: 1, opacity: 1 }} ${tween} whileFocus={{ scale: 1.05 }} whilePress={{ opacity: 0.8 }} />;`);
   assert.match(compile(`${core}<View onPress={go} selected={s} className="transition selected:scale-110 focused:scale-105" />;`),

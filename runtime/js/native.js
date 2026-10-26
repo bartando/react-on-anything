@@ -9,9 +9,9 @@ import {normalizeDownloadManifest} from './download-formats.js';
 import {batched, onFrameUnbatched} from './frame.js';
 
 function host() {
-  const api = globalThis.__ps5ReactNative;
+  const api = globalThis.__roaNative;
   if (!api) {
-    throw new Error('Native modules need a PS5 React host (globalThis.__ps5ReactNative is missing); '
+    throw new Error('Native modules need a React on Anything host (globalThis.__roaNative is missing); '
       + 'run the app with npm run dev, npm run preview, or a PS5 build');
   }
   return api;

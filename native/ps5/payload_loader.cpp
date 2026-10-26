@@ -36,7 +36,7 @@ int send(const char* program, const std::string& request, int timeout_us, const 
   const std::string logical = std::string("/app0/") + program;
   const int file = host::resolve_path(logical.c_str(), path, sizeof path) ? open(path, O_RDONLY) : -1;
   if (file < 0) { error = std::string(what) + ": " + program + " is missing from the app folder"; return -1; }
-  const int socket = sceNetSocket("ps5-react-payload", 2, 1, 6);
+  const int socket = sceNetSocket("react-on-anything-payload", 2, 1, 6);
   constexpr int connect_us = 5'000'000, level = 0xffff;
   const NetAddress address{sizeof(NetAddress), 2, static_cast<std::uint16_t>((9021 << 8) | (9021 >> 8)), 0x0100007f, 0, {}};
   bool ok = socket >= 0 && sceNetSetsockopt(socket, level, 0x1105, &timeout_us, sizeof timeout_us) >= 0 &&

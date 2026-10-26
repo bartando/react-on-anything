@@ -75,7 +75,7 @@ export function useFocusNode(options, enabled = true) {
 
 /**
  * Focus for a custom component: spread `focusProps` on the host element that should be navigable.
- * `useIsFocused` below it needs one of the focusable elements from `@ps5-react/core` instead.
+ * `useIsFocused` below it needs one of the focusable elements from `@react-on-anything/core` instead.
  * @param {FocusableOptions} [options]
  * @returns {{focused: boolean, pressed: boolean,
  *   focusProps: {onLayout: Function, onPress?: Function, focusable: false}}}

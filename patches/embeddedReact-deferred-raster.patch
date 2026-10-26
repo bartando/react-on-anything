@@ -5,7 +5,7 @@ revision pinned in dependencies.lock.json, in the patch order listed there.
 Changed files: engine/include/er_scene.h, engine/scene/compositor.c and
 engine/tests/rendering/CMakeLists.txt; new file
 engine/tests/rendering/test_deferred_raster.c.
-Not proposed upstream: PS5 React maintains this change here.
+Not proposed upstream: React on Anything maintains this change here.
 
 The reconciler calls NativeUI.commit() after each React commit, and the bridge
 runs a full er_commit() for it: layout and a paint. A host that commits once per

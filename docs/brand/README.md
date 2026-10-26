@@ -1,4 +1,4 @@
-# PS5 React brand assets
+# React on Anything brand assets
 
 `logo.png` is the original project mark: a blue display containing JSX brackets
 and a framebuffer pixel. It identifies the independent framework and contains

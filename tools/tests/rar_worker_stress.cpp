@@ -5,7 +5,7 @@
 // Cancels RAR extractions at random moments, then extracts once more. Each cancel must end promptly as
 // "cancelled", remove staging, reap the worker process and leave no descriptor open; stop() during an
 // extraction must return just as promptly.
-// Usage: rar_worker_stress <destination> <rounds> <volumes...> (PS5_REACT_RAR_WORKER names rar-extract).
+// Usage: rar_worker_stress <destination> <rounds> <volumes...> (ROA_RAR_WORKER names rar-extract).
 #include "archives.hpp"
 #include <cassert>
 #include <chrono>

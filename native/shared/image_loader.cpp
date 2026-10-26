@@ -8,7 +8,7 @@
 #ifdef PROSPERO
 #include "app_config.hpp"
 #endif
-#if !defined(PROSPERO) || PS5_REACT_NETWORKING
+#if !defined(PROSPERO) || ROA_NETWORKING
 #include <curl/curl.h>
 #include <algorithm>
 #include <array>

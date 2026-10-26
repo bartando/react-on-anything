@@ -4,7 +4,7 @@ Modified from Embedded React (Apache-2.0, Copyright 2026 Cory Lamming) at the
 revision pinned in dependencies.lock.json, after the patches listed before this
 one there. Changed files: engine/scene/compositor.c and
 engine/tests/rendering/test_anim_translate_offscreen.c.
-Not proposed upstream: PS5 React maintains this change here.
+Not proposed upstream: React on Anything maintains this change here.
 
 A header translated past the top edge of the screen in one frame leaves its
 items' records of where they last painted on screen: render_tree prunes nodes

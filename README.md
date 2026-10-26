@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="docs/brand/logo.png" width="160" alt="PS5 React — JSX brackets and a framebuffer pixel inside a display">
+  <img src="docs/brand/logo.png" width="160" alt="React on Anything — JSX brackets and a framebuffer pixel inside a display">
 </p>
 
-<h1 align="center">PS5 React</h1>
+<h1 align="center">React on Anything</h1>
 
 <p align="center">
   <strong>React interfaces. Controller navigation. Standalone PS5 homebrew.</strong><br>
@@ -17,7 +17,7 @@
   <a href="#documentation">Documentation</a>
 </p>
 
-PS5 React is an open-source framework for standalone console homebrew. React runs
+React on Anything is an open-source framework for standalone console homebrew. React runs
 inside **QuickJS** through **Embedded React**. The software renderer draws the
 interface into a framebuffer; **OpenGL presents that framebuffer** on screen.
 The application runs in its own native host, without a browser or Sony RNPS hooks.
@@ -39,7 +39,7 @@ features need their own console validation.
 | Native services | Filesystem, HTTP, large-file downloads, controller state, notifications, users and power control |
 
 This is a focused console renderer, not the complete official React Native
-runtime. Use the supported primitives and native modules from `@ps5-react/core`.
+runtime. Use the supported primitives and native modules from `@react-on-anything/core`.
 
 ## Quick start
 
@@ -66,7 +66,7 @@ The supported development environment is **macOS on Apple Silicon**.
 
    ```sh
    git clone https://github.com/half144/ps5-react.git
-   cd ps5-react
+   cd react-on-anything
    python3 -m venv .venv
    source .venv/bin/activate
    python3 -m pip install -r requirements.txt
@@ -113,7 +113,7 @@ its font asset and the `font-inter` theme mapping.
 
 ```jsx
 import {useState} from 'react';
-import {AppRegistry, FocusScope, Text, View} from '@ps5-react/core';
+import {AppRegistry, FocusScope, Text, View} from '@react-on-anything/core';
 
 function App() {
   const [count, setCount] = useState(0);
@@ -165,7 +165,7 @@ npm run dev -- --app-dir ../my-projects/my-store
 npm run build -- --app-dir ../my-projects/my-store
 ```
 
-The bundler resolves React and `@ps5-react/core` from this checkout; an external
+The bundler resolves React and `@react-on-anything/core` from this checkout; an external
 app does not need its own `node_modules`. Its directory name must not collide
 with a folder in `apps/`. See [external-app editor setup](docs/EXTERNAL-APPS.md).
 
@@ -234,7 +234,7 @@ lookup runs on the console.
 ### Layout, focus and state
 
 ```jsx
-import {Text, View} from '@ps5-react/core';
+import {Text, View} from '@react-on-anything/core';
 
 function GameCard({title, selected, onOpen}) {
   return (
@@ -255,7 +255,7 @@ variants read props on the same element, including `selected:`, `disabled:`,
 ### Reusable styles
 
 ```jsx
-import {Text, tw} from '@ps5-react/core';
+import {Text, tw} from '@react-on-anything/core';
 
 const heading = tw`font-inter text-3xl font-semibold text-white`;
 
@@ -307,7 +307,7 @@ See [the complete supported-utility reference](docs/TAILWIND.md).
 Group a page or dialog with a focus scope and handle Circle through `onBack`:
 
 ```jsx
-import {FocusScope, Text, View} from '@ps5-react/core';
+import {FocusScope, Text, View} from '@react-on-anything/core';
 
 function Settings({close}) {
   return (
@@ -328,7 +328,7 @@ focus and the viewport rather than creating every card at once.
 
 ```jsx
 import {useCallback} from 'react';
-import {ScrollView, Text, View, VirtualList} from '@ps5-react/core';
+import {ScrollView, Text, View, VirtualList} from '@react-on-anything/core';
 
 function Library({games, openGame}) {
   const renderItem = useCallback(({item}) => (
@@ -359,7 +359,7 @@ The Motion-style API drives animation in the C engine, without per-frame React
 state updates:
 
 ```jsx
-import {motion, Text, transitions} from '@ps5-react/core';
+import {motion, Text, transitions} from '@react-on-anything/core';
 
 function AnimatedCard({open}) {
   return (
@@ -376,7 +376,7 @@ function AnimatedCard({open}) {
 Simple animation classes compile to the same motion props:
 
 ```jsx
-import {View} from '@ps5-react/core';
+import {View} from '@react-on-anything/core';
 
 <View onPress={open}
   className="w-48 h-28 rounded-xl bg-slate-800 transition-transform duration-150
@@ -389,7 +389,7 @@ rotation have scratch-buffer size limits. See [Animation](docs/ANIMATION.md).
 
 ## Native APIs
 
-Import public modules from `@ps5-react/core`; apps do not access the host's
+Import public modules from `@react-on-anything/core`; apps do not access the host's
 internal global object. Filesystem/controller calls are synchronous; HTTP and
 downloads submit work to native workers.
 
@@ -408,7 +408,7 @@ contains signatures, limits, error behavior and desktop equivalents.
 ### Persistent app data
 
 ```js
-import {FileSystem} from '@ps5-react/core';
+import {FileSystem} from '@react-on-anything/core';
 
 const directory = `${FileSystem.dataDir}/preferences`;
 const path = `${directory}/settings.json`;
@@ -443,7 +443,7 @@ elevation. A running jailbreak alone does not grant every title payload access.
 Use `Http.request` for bounded JSON or text responses:
 
 ```js
-import {Http} from '@ps5-react/core';
+import {Http} from '@react-on-anything/core';
 
 export async function loadCatalog(url) {
   const response = await Http.request(url, {
@@ -467,7 +467,7 @@ File bytes stay in native memory and stream directly to disk. JavaScript
 receives progress and a completion promise:
 
 ```js
-import {Downloads, FileSystem, Power} from '@ps5-react/core';
+import {Downloads, FileSystem, Power} from '@react-on-anything/core';
 
 export async function downloadArchive(url, reportProgress) {
   const directory = `${FileSystem.dataDir}/archives`;
@@ -531,7 +531,7 @@ hardware benchmark planning.
 
 ```jsx
 import {useEffect} from 'react';
-import {Controller, DeviceInfo, Platform, Text, useGamepad} from '@ps5-react/core';
+import {Controller, DeviceInfo, Platform, Text, useGamepad} from '@react-on-anything/core';
 
 function ControllerStatus() {
   const pad = useGamepad();
@@ -559,7 +559,7 @@ use the focus navigation system.
 Local imports are baked into the app at build time:
 
 ```jsx
-import {Image, Sound} from '@ps5-react/core';
+import {Image, Sound} from '@react-on-anything/core';
 import cover from './assets/cover.png';
 import confirm from './assets/confirm.wav';
 
@@ -621,7 +621,7 @@ changes and new artifacts require their own hardware validation.
 
 ```text
 apps/<app>/                 JSX, app.json, themes, assets and font configuration
-runtime/js/                 Public @ps5-react/core APIs, focus and motion
+runtime/js/                 Public @react-on-anything/core APIs, focus and motion
 native/shared/              Native bridge, workers and framebuffer presentation
 native/desktop/             macOS graphics, lifecycle and input
 native/ps5/                 PS5 graphics, lifecycle, input and filesystem access

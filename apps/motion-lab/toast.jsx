@@ -1,7 +1,7 @@
 // Copyright (C) 2026 half144 and PS5 React contributors
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Additional attribution term: see LICENSE-ATTRIBUTION.
-import {View, Text, motion, transitions} from '@ps5-react/core';
+import {View, Text, motion, transitions} from '@react-on-anything/core';
 import {caption} from './ui.jsx';
 
 // 240 logical px wide (480 physical) keeps the pop's scale inside the transform buffer.

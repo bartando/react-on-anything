@@ -15,10 +15,10 @@ typedef struct {
   const char* bundle;
   unsigned long bundle_length;
   void (*register_assets)(void);
-} Ps5ReactLayout;
+} RoaLayout;
 
-extern const Ps5ReactLayout ps5_react_layouts[];
-extern const unsigned ps5_react_layout_count;
+extern const RoaLayout roa_layouts[];
+extern const unsigned roa_layout_count;
 #ifdef __cplusplus
 }
 #endif

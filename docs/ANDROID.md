@@ -2,7 +2,7 @@
 
 `native/android` runs an app on Android TV (developed on an NVIDIA SHIELD, Android 11): a
 NativeActivity that draws with the GPU renderer (`native/shared/gpu_renderer.hpp`) through OpenGL
-ES 3.2. The engine still lays out and records every frame; the GPU draws it. `PS5_REACT_GPU=0` in
+ES 3.2. The engine still lays out and records every frame; the GPU draws it. `ROA_GPU=0` in
 `options.env` draws with the software rasterizer instead, for comparison.
 
 ```sh
@@ -22,7 +22,7 @@ On the device, under `/sdcard/Android/data/<package>/files`:
 | `sandbox/` | `/app0`, `/download0`, `/temp0` resolve here |
 | `options.env` | `KEY=VALUE` lines set before boot (`--options 'A=1;B=2'`) |
 
-Logs go to logcat under the tag `ps5-react`. Video plays through the FFmpeg player the other hosts
+Logs go to logcat under the tag `react-on-anything`. Video plays through the FFmpeg player the other hosts
 use, so it opens what they open (fMP4 HLS included, which the system's MediaPlayer cannot) and has
 the same audio tracks and subtitles. The picture decodes in MediaCodec (`native/android/media_codec.hpp`)
 into hardware buffers the display shows on a system layer under the app's window. The codec tags
@@ -31,6 +31,6 @@ as HDR (HLG is untested). Android 11 refuses most dataspaces on a layer, a video
 the layer sets none it would refuse. The presenter leaves a hole in the window over
 it (`native/android/gl_video.cpp`). FFmpeg decodes the sound for the mixer. A codec MediaCodec refuses
 does not play: there is no software path for the picture, nor upscalers.
-`PS5_REACT_VIDEO_DUMP=<directory>` (in `options.env`) writes the first packets each decoder gets, to
+`ROA_VIDEO_DUMP=<directory>` (in `options.env`) writes the first packets each decoder gets, to
 decode elsewhere. Archives (libarchive) are not there yet; their API refuses each request. The system's CA store is gathered into one file for curl
 at startup.

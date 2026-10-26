@@ -1,7 +1,7 @@
 # Download engine: is it at the ceiling?
 
-Date: 2026-10-10. Engine: `ps5-react` main at d1e4aa2. App: `game-store` main at 0b1837b.
-Prototypes: `ps5-react` branch `perf/download-speed` (f9e6bd3), `game-store` branch
+Date: 2026-10-10. Engine: `react-on-anything` main at d1e4aa2. App: `game-store` main at 0b1837b.
+Prototypes: `react-on-anything` branch `perf/download-speed` (f9e6bd3), `game-store` branch
 `perf/download-speed` (16118eb). Nothing pushed, released or deployed.
 
 ## Short answer
@@ -108,7 +108,7 @@ link of the same MediaFire file gains nothing if the cap is per IP, which is lik
 | # | Change | Expected gain | Effort | Risk | Status |
 |---|---|---|---|---|---|
 | 1 | Volumes use `connections: 64, adaptive: true` (keep the 32 MiB ranges so partials resume) | Up to **3.5x** on per-connection hosts (9.7 to 34.6 MB/s), **6.7x** with #2. Nothing on per-client caps | 1 line | ~0: same settings the single-file path ships with | **Done**: game-store 16118eb, 75/75 queue tests |
-| 2 | Engine tail splitting: idle connections take the second half of the range with the most bytes left (down to 1 MiB) | +70% under 1 GiB, +14% at 900 MiB, 5.7x with slow connections, 0 on large-file steady state | ~70 lines | Low: verified bytes in every bench run, 100 stress runs, cancel and resume mid-split, HTTPS, PS5 cross-compile with `-Werror`, `tools/test_network.py` passes with a new split and split-retry test | **Done**: ps5-react f9e6bd3 |
+| 2 | Engine tail splitting: idle connections take the second half of the range with the most bytes left (down to 1 MiB) | +70% under 1 GiB, +14% at 900 MiB, 5.7x with slow connections, 0 on large-file steady state | ~70 lines | Low: verified bytes in every bench run, 100 stress runs, cancel and resume mid-split, HTTPS, PS5 cross-compile with `-Werror`, `tools/test_network.py` passes with a new split and split-retry test | **Done**: react-on-anything f9e6bd3 |
 | 3 | Keep each host's learned window across jobs, so volumes 2..N start at the window volume 1 reached | About 3 s of full speed per volume | Small | Low (AIMD still shrinks on 5xx) | Recommended |
 | 4 | Multi-source across hosts with sampled identity check and per-mirror validators | About 2x on capped hosts (MediaFire) when a second host has the same part | Medium-high | Medium (identity, heap) | Recommended after #1-#2 |
 | 5 | Two volumes in parallel, if a host caps per link rather than per IP | Up to 2x on those hosts | High (the engine runs one job at a time) | Medium | Only if a console test shows a per-link cap |

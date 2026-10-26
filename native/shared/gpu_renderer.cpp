@@ -366,7 +366,7 @@ GLuint compile(GLenum type, const std::string& source) {
   if (!ok) {
     char log[2048];
     glGetShaderInfoLog(shader, sizeof log, nullptr, log);
-    log_line("[PS5-REACT] gpu: shader failed: %s", log);
+    log_line("[ROA] gpu: shader failed: %s", log);
     glDeleteShader(shader);
     return 0;
   }
@@ -389,7 +389,7 @@ GLuint link() {
   if (!ok) {
     char log[2048];
     glGetProgramInfoLog(program, sizeof log, nullptr, log);
-    log_line("[PS5-REACT] gpu: program failed: %s", log);
+    log_line("[ROA] gpu: program failed: %s", log);
     glDeleteProgram(program);
     return 0;
   }
@@ -803,7 +803,7 @@ bool GpuRenderer::replay() {
   if (!stats_.window_start_us) stats_.window_start_us = now_us;
   if (now_us - stats_.window_start_us >= 2000000) {
     const double n = static_cast<double>(stats_.replays);
-    log_line("[PS5-REACT] gpu: replays=%llu avg=%.2fms max=%.2fms (submit %.2f%s) record=%.2fms | per replay: ops=%.0f "
+    log_line("[ROA] gpu: replays=%llu avg=%.2fms max=%.2fms (submit %.2f%s) record=%.2fms | per replay: ops=%.0f "
              "draws=%.0f in %.1f calls, regroups=%.1f pixels=%.1f (%.0fKB) uploads=%.1f",
              static_cast<unsigned long long>(stats_.replays), stats_.replay_us / n / 1000.0,
              stats_.max_replay_us / 1000.0, stats_.submit_us / n / 1000.0,
@@ -814,12 +814,12 @@ bool GpuRenderer::replay() {
     constexpr const char* kUploadNames[] = {"images", "glyphs", "pixels"};
     for (int kind = 0; kind < 3; kind++)
       if (stats_.upload_count[kind])
-        log_line("[PS5-REACT] gpu:   upload %s: %llu, %.0fKB, %.1fms total, %.1fms max", kUploadNames[kind],
+        log_line("[ROA] gpu:   upload %s: %llu, %.0fKB, %.1fms total, %.1fms max", kUploadNames[kind],
                     static_cast<unsigned long long>(stats_.upload_count[kind]), stats_.upload_bytes[kind] / 1024.0,
                     stats_.upload_us[kind] / 1000.0, stats_.max_upload_us[kind] / 1000.0);
     for (int kind = 0; kind < ER_CANVAS_OP_COUNT; kind++)
       if (stats_.captures[kind])
-        log_line("[PS5-REACT] gpu:   capture %s: %.1f per replay, %.0f kpx each (bounds, before clipping)",
+        log_line("[ROA] gpu:   capture %s: %.1f per replay, %.0f kpx each (bounds, before clipping)",
                     kKindNames[kind], stats_.captures[kind] / n,
                     stats_.capture_px[kind] / 1000.0 / static_cast<double>(stats_.captures[kind]));
     stats_ = {};

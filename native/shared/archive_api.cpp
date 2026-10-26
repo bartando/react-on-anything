@@ -101,7 +101,7 @@ JSValue poll(JSContext* ctx, JSValueConst, int, JSValueConst*) {
   return out;
 }
 }
-JSValue ps5_react_archive_api(JSContext* ctx) {
+JSValue roa_archive_api(JSContext* ctx) {
   JSValue api = JS_NewObject(ctx);
   JS_SetPropertyStr(ctx,api,"extract",JS_NewCFunction(ctx,extract,"extract",5));
   JS_SetPropertyStr(ctx,api,"inspect",JS_NewCFunction(ctx,inspect,"inspect",1));

@@ -48,7 +48,7 @@ effect on a single successful transfer of a multi-gigabyte piece.
 The pinned platform's `src/runtime/app_heap.c` wraps allocation into one
 process heap. `patches/platform-heap-size.patch` sizes it at launch from the
 title's free flexible memory, 1 GiB down to 128 MiB, and the host logs the result
-as `[PS5-REACT] heap: N MiB`; download telemetry prints `heap=live/size`. The PS5 host also sets a 32 MiB QuickJS limit and a 1 MiB
+as `[ROA] heap: N MiB`; download telemetry prints `heap=live/size`. The PS5 host also sets a 32 MiB QuickJS limit and a 1 MiB
 QuickJS stack limit. The JavaScript allowance is not an additional native heap.
 The render thread has an 8 MiB stack. TLS, rendering, assets, native objects and
 download buffers need a combined measured memory budget.
