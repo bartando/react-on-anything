@@ -91,7 +91,7 @@ def checkout(path, url, revision, patches=()):
         # Intent-to-add, so files a patch creates show up in git diff like the rest. Not through
         # `git apply --intent-to-add`: that leaves only the patch's files in the index (git 2.48, 2.50),
         # and the next run then finds every other file deleted.
-        created = [line.split(" ", 3)[-1] for line in subprocess.run(["git", "apply", "--summary", patch], cwd=path,
+        created = [line.split(maxsplit=3)[-1] for line in subprocess.run(["git", "apply", "--summary", patch], cwd=path,
                    capture_output=True, text=True, check=True).stdout.splitlines() if line.startswith(" create mode ")]
         if created: run(["git", "add", "--intent-to-add", "--", *created], cwd=path)
 
