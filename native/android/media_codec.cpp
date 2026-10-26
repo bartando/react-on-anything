@@ -126,8 +126,8 @@ public:
       return;
     }
     output_->codec = codec;
-    // PS5_REACT_VIDEO_DUMP=<directory>: the first packets as the codec gets them, to decode elsewhere.
-    if (const char* directory = std::getenv("PS5_REACT_VIDEO_DUMP")) {
+    // ROA_VIDEO_DUMP=<directory>: the first packets as the codec gets them, to decode elsewhere.
+    if (const char* directory = std::getenv("ROA_VIDEO_DUMP")) {
       static int dumps = 0;
       const std::string path = std::string(directory) + "/video-" + std::to_string(++dumps) + "." +
                                (parameters->codec_id == AV_CODEC_ID_HEVC ? "hevc" : "h264");

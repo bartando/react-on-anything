@@ -13,9 +13,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from cli import desktop  # noqa: E402
 from common import ROOT  # noqa: E402
 
-_, build = desktop(ROOT / "apps/starter", target="ps5-react-video-test")
+_, build = desktop(ROOT / "apps/starter", target="react-on-anything-video-test")
 media = ROOT / "tools/tests/media"
-result = subprocess.run([build / "ps5-react-video-test", media / "clip-320x180-h264-aac.mp4",
+result = subprocess.run([build / "react-on-anything-video-test", media / "clip-320x180-h264-aac.mp4",
                          media / "clip-320x180-subtitled.mkv", media / "clip-subtitles.srt",
                          media / "clip-short-audio.mp4", media / "clip-320x180-h264-ac3-eac3.mkv"],
                         capture_output=True, text=True, timeout=120)

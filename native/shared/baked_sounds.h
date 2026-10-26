@@ -17,8 +17,8 @@ typedef struct {
 #ifdef __cplusplus
 extern "C" {
 #endif
-extern const BakedSound ps5_react_sounds[];
-extern const uint32_t ps5_react_sound_count;
+extern const BakedSound roa_sounds[];
+extern const uint32_t roa_sound_count;
 #ifdef __cplusplus
 }
 #endif

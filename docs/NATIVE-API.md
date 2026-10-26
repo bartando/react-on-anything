@@ -1,11 +1,11 @@
 # Native modules
 
-`@ps5-react/core` exposes platform services as React Native-style modules.
+`@react-on-anything/core` exposes platform services as React Native-style modules.
 Apps import them like any other export; they never touch the SDK, libkernel,
 or SDL directly.
 
 ```jsx
-import {Platform, DeviceInfo, FileSystem, Controller, useGamepad} from '@ps5-react/core';
+import {Platform, DeviceInfo, FileSystem, Controller, useGamepad} from '@react-on-anything/core';
 
 const {model, firmware} = DeviceInfo.get();
 FileSystem.writeFile(`${FileSystem.dataDir}/save.json`, JSON.stringify(state));
@@ -16,7 +16,7 @@ Controller.setLightBar('#38bdf8');
 
 ## Contract
 
-The modules in `runtime/js/native.js` wrap `globalThis.__ps5ReactNative`, which
+The modules in `runtime/js/native.js` wrap `globalThis.__roaNative`, which
 each host installs before the bundle runs. Its exact shape (ABI v15) is
 documented in [`native/shared/host_api.hpp`](../native/shared/host_api.hpp).
 `native/shared/host_api.cpp` implements the filesystem with POSIX and the object
@@ -33,9 +33,9 @@ itself; `native/ps5/` and `native/desktop/` implement the platform functions.
   path, and the system error, for example
   `fs.readDir /download0/missing: No such file or directory`. Wrap calls in
   `try`/`catch` and show the message.
-- **Missing host.** If `__ps5ReactNative` does not exist (for example when a
-  module is evaluated outside a PS5 React host), every call throws an error
-  explaining that a PS5 React host is required.
+- **Missing host.** If `__roaNative` does not exist (for example when a
+  module is evaluated outside a React on Anything host), every call throws an error
+  explaining that a React on Anything host is required.
 - **QuickJS runtime.** The runtime has no `Date` objects (`Date.now()` works),
   typed arrays, or `Proxy`; values cross the boundary as strings, numbers,
   booleans, plain objects, arrays, and `null`.
@@ -172,7 +172,7 @@ datagram to `255.255.255.255:port` and resolves with the replies gathered for
 service discovery, such as Jellyfin's:
 
 ```js
-import {LocalNetwork} from '@ps5-react/core';
+import {LocalNetwork} from '@react-on-anything/core';
 const replies = await LocalNetwork.broadcast({port: 7359, message: 'who is JellyfinServer?'});
 ```
 
@@ -305,7 +305,7 @@ Import a WAV like an image; the build bakes it into the app and the import is
 the sound's name:
 
 ```jsx
-import {Sound, useNavigationEvents} from '@ps5-react/core';
+import {Sound, useNavigationEvents} from '@react-on-anything/core';
 import tick from './assets/sounds/focus.wav';
 
 useNavigationEvents(event => { if (event.type === 'move') Sound.play(tick); });
@@ -396,7 +396,7 @@ switch that has not happened yet.
 
 The desktop preview keeps the monitor's rate, rebuilds its presenter the same
 way, reports the requested rate and prints
-`[PS5-REACT] refresh switch to <hz> Hz`. **Not yet validated on hardware**: no
+`[ROA] refresh switch to <hz> Hz`. **Not yet validated on hardware**: no
 console has switched rates at runtime yet.
 
 ## Fonts
@@ -433,7 +433,7 @@ desktop preview runs itself again.
 - `Notifications.show` prints `[notify] message: subMessage` to the terminal.
 - `Users` reports the macOS user (`$USER`) with id `1`.
 - Temperatures are `null`; `cpuFrequency` is `null` on Apple silicon.
-- `language` comes from `PS5_REACT_LANGUAGE`, else `LC_ALL`, `LC_MESSAGES` or
+- `language` comes from `ROA_LANGUAGE`, else `LC_ALL`, `LC_MESSAGES` or
   `LANG` (`pt_BR.UTF-8` reads `pt-BR`); `null` for the `C`/`POSIX` locale.
 - `openURL` opens the URL in the default macOS browser.
 - With an SDL game controller connected, the light bar and rumble use it;
@@ -493,7 +493,7 @@ to their accessible sandbox mounts. Data and temporary roots must pass an
 exclusive file creation, write, read and removal proof; opening a directory
 for reading alone does not establish write access. If the original roots fail
 that proof after the root change, data falls back to
-`/data/ps5-react/<TITLE_ID>` and temporary files to its `tmp` directory. Directory
+`/data/react-on-anything/<TITLE_ID>` and temporary files to its `tmp` directory. Directory
 creation and fallback proofs are checked and failures log the path and errno.
 That fallback persists until explicitly removed.
 Failure leaves console path mapping disabled and logs the upstream status.
@@ -519,7 +519,7 @@ directory or select **Refresh** to query again; focus changes do not query stora
 ## Package installation
 
 ```js
-import {Packages} from '@ps5-react/core';
+import {Packages} from '@react-on-anything/core';
 const task = Packages.install({path: '/data/downloads/packages/CUSA04286-game.pkg', name: 'BATTLESHIP'});
 const unsubscribe = task.subscribe(({status, written, total}) => console.log(status, written, total));
 try { await task.done; } finally { unsubscribe(); }
@@ -541,7 +541,7 @@ firmware above 11.60, PS5 fake game packages install but do not launch.
 ## Archive extraction
 
 ```js
-import {Archives} from '@ps5-react/core';
+import {Archives} from '@react-on-anything/core';
 const task = Archives.extract({
   sources: ['/data/downloads/part-1.bin', '/data/downloads/part-2.bin'],
   destination: '/data/downloads/extracted/my-release',
@@ -607,7 +607,7 @@ magic only, not validated as mountable.
 ## Browser download capture (ABI v7)
 
 ```js
-import {BrowserCapture} from '@ps5-react/core';
+import {BrowserCapture} from '@react-on-anything/core';
 const task = BrowserCapture.capture({
   prefix: 'https://vikingfile.com/d/',
   suffix: '/Selected file.pkg',

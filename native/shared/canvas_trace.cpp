@@ -102,7 +102,7 @@ bool start(const char* path, int render_workers) {
   out = std::fopen(path, "w");
   if (!out) return false;
   if (render_workers > 1)
-    std::fprintf(out, "# %d render workers: ops of one commit interleave (PS5_REACT_RENDER_WORKERS=1 orders them)\n",
+    std::fprintf(out, "# %d render workers: ops of one commit interleave (ROA_RENDER_WORKERS=1 orders them)\n",
                  render_workers);
   er_set_canvas(watch, nullptr);
   return true;

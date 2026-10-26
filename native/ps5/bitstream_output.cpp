@@ -60,7 +60,7 @@ void run(std::size_t grain) {
   while (!output.stop.load(std::memory_order_relaxed)) {
     output.fill(words.data(), grain);
     if (sceAudioOutOutput(output.handle, words.data()) < 0) {
-      if (output.errors.fetch_add(1) == 0) async_log::write("[PS5-REACT] bitstream output failed");
+      if (output.errors.fetch_add(1) == 0) async_log::write("[ROA] bitstream output failed");
       std::this_thread::sleep_for(std::chrono::milliseconds(5));
       continue;
     }
@@ -77,14 +77,14 @@ bool open_bitstream(iec61937::Codec codec, BitstreamFill fill) {
   close_bitstream();
   const int init = sceAudioOutInit();
   if (init != 0 && init != kAlreadyInitialized) {
-    async_log::write("[PS5-REACT] bitstream sceAudioOutInit=0x%08x", static_cast<unsigned>(init));
+    async_log::write("[ROA] bitstream sceAudioOutInit=0x%08x", static_cast<unsigned>(init));
     return false;
   }
   const auto began = std::chrono::steady_clock::now();
   const int configured = sceAudioOutExConfigureOutput(0, 0, mode(codec), kAnyDevice, 0);
   const int handle = configured >= 0 ? sceAudioOutExOpen(kSystemUser, mode(codec)) : -1;
   const long long ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - began).count();
-  async_log::write("[PS5-REACT] bitstream %s mode=%d configure=0x%08x open=0x%08x in %lldms", name(codec), mode(codec),
+  async_log::write("[ROA] bitstream %s mode=%d configure=0x%08x open=0x%08x in %lldms", name(codec), mode(codec),
                    static_cast<unsigned>(configured), static_cast<unsigned>(handle), ms);
   if (handle < 0) {
     if (configured >= 0) sceAudioOutExConfigureOutput(0, 0, kDefaultMode, kAnyDevice, 0);
@@ -106,7 +106,7 @@ void close_bitstream() {
   if (output.thread.joinable()) output.thread.join();
   const int closed = sceAudioOutExClose(output.handle);
   const int restored = sceAudioOutExConfigureOutput(0, 0, kDefaultMode, kAnyDevice, 0);
-  async_log::write("[PS5-REACT] bitstream %s closed after %llu grains, %llu errors: close=0x%08x restore=0x%08x",
+  async_log::write("[ROA] bitstream %s closed after %llu grains, %llu errors: close=0x%08x restore=0x%08x",
                    name(output.codec), static_cast<unsigned long long>(output.grains.load()),
                    static_cast<unsigned long long>(output.errors.load()), static_cast<unsigned>(closed),
                    static_cast<unsigned>(restored));

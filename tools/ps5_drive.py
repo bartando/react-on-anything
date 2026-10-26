@@ -66,7 +66,7 @@ def start(app, resolution=None):
     with open(ROOT / ".build/build.lock", "w") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         command, directory = desktop(app, resolution=resolution)
-    env = {**preview_env(app), "PS5_REACT_CONTROL": SOCKET}
+    env = {**preview_env(app), "ROA_CONTROL": SOCKET}
     with open(LOG, "w") as log:
         process = subprocess.Popen([str(part) for part in command], cwd=directory, env=env, stdout=log,
                                    stderr=subprocess.STDOUT, start_new_session=True)

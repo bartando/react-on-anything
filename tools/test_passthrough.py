@@ -65,8 +65,8 @@ def edid(name, blocks, basic_audio=True):
 class Passthrough(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        _, build = desktop(ROOT / "apps/starter", target="ps5-react-passthrough-test")
-        cls.binary = build / "ps5-react-passthrough-test"
+        _, build = desktop(ROOT / "apps/starter", target="react-on-anything-passthrough-test")
+        cls.binary = build / "react-on-anything-passthrough-test"
         cls.work = Path(tempfile.mkdtemp(prefix="passthrough-"))
 
     @classmethod

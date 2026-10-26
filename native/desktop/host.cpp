@@ -60,7 +60,7 @@ void er_register_assets(void);
 
 namespace {
 // Render at twice the logical resolution so rounded edges remain smooth on Retina.
-constexpr int width = PS5_REACT_WIDTH, height = PS5_REACT_HEIGHT;
+constexpr int width = ROA_WIDTH, height = ROA_HEIGHT;
 
 std::int64_t now_us() {
   static const Uint64 frequency = SDL_GetPerformanceFrequency();
@@ -184,7 +184,7 @@ struct Host {
   ~Host() {
     if (tracing) canvas_trace::stop();
     gpu.stop();
-    ps5_react_stop_images();
+    roa_stop_images();
     archives::stop();
     browser_capture::stop();
     lan::stop();
@@ -194,7 +194,7 @@ struct Host {
     video_layers::stop();
     if (runtime_started) er_runtime_shutdown();
     text_shaper::shutdown();
-    ps5_react_stop_sound();
+    roa_stop_sound();
     render_workers::stop();
     if (backend_started) er_software_backend_destroy();
     presenter.release(); // GL objects must be deleted before their context.
@@ -213,7 +213,7 @@ struct Host {
         SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE) ||
         SDL_GL_SetAttribute(SDL_GL_CONTEXT_FLAGS, SDL_GL_CONTEXT_FORWARD_COMPATIBLE_FLAG) ||
         SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1)) return false;
-    window = SDL_CreateWindow(PS5_REACT_NAME,
+    window = SDL_CreateWindow(ROA_NAME,
       SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, width/2, height/2,
       SDL_WINDOW_OPENGL | SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI);
     if (!window || !(context = SDL_GL_CreateContext(window))) return false;
@@ -234,50 +234,50 @@ struct Host {
   bool boot(const char* path) {
     backend_started = er_software_backend_init(width, height);
     if (!backend_started || !damage_tracker_install(width, height)) return false;
-    // The presenter draws qualifying <Image layer> images itself; PS5_REACT_LAYERS=0 rasterizes them all.
-    const char* layers = std::getenv("PS5_REACT_LAYERS");
+    // The presenter draws qualifying <Image layer> images itself; ROA_LAYERS=0 rasterizes them all.
+    const char* layers = std::getenv("ROA_LAYERS");
     er_set_layers_enabled((!layers || std::atoi(layers) != 0) && presenter.layers_supported());
-    // PS5_REACT_RENDER_WORKERS=1 renders single-core, for comparisons.
-    const char* workers = std::getenv("PS5_REACT_RENDER_WORKERS");
+    // ROA_RENDER_WORKERS=1 renders single-core, for comparisons.
+    const char* workers = std::getenv("ROA_RENDER_WORKERS");
     // The GPU renderer needs the ops in drawing order: one worker.
-    const bool gpu_drawing = std::getenv("PS5_REACT_GPU") != nullptr;
-    const bool gpu_mirroring = !gpu_drawing && std::getenv("PS5_REACT_GPU_MIRROR") != nullptr;
+    const bool gpu_drawing = std::getenv("ROA_GPU") != nullptr;
+    const bool gpu_mirroring = !gpu_drawing && std::getenv("ROA_GPU_MIRROR") != nullptr;
     render_worker_count = render_workers::start(gpu_drawing || gpu_mirroring ? 1
                                                 : workers && std::atoi(workers) > 0 ? std::atoi(workers)
                                                                                     : render_workers::available_cpus());
-    std::printf("[PS5-REACT] render workers=%d of %d, cpus=%d\n", render_worker_count, render_workers::max_workers(),
+    std::printf("[ROA] render workers=%d of %d, cpus=%d\n", render_worker_count, render_workers::max_workers(),
                 render_workers::available_cpus());
-    // PS5_REACT_CANVAS_TRACE=<file> lists every drawing primitive per commit (canvas_trace.hpp).
-    // PS5_REACT_GPU=1 draws with OpenGL instead of the software rasterizer (gpu_renderer.hpp);
-    // PS5_REACT_GPU_MIRROR=1 draws with both and compares the two at each shot.
+    // ROA_CANVAS_TRACE=<file> lists every drawing primitive per commit (canvas_trace.hpp).
+    // ROA_GPU=1 draws with OpenGL instead of the software rasterizer (gpu_renderer.hpp);
+    // ROA_GPU_MIRROR=1 draws with both and compares the two at each shot.
     if (gpu_drawing || gpu_mirroring) {
       if (!gpu.start(width, height, gpu_drawing ? GpuRenderer::Mode::draw : GpuRenderer::Mode::mirror))
-        std::fprintf(stderr, "[PS5-REACT] gpu renderer: could not start\n");
-    } else if (const char* trace = std::getenv("PS5_REACT_CANVAS_TRACE")) {
+        std::fprintf(stderr, "[ROA] gpu renderer: could not start\n");
+    } else if (const char* trace = std::getenv("ROA_CANVAS_TRACE")) {
       tracing = canvas_trace::start(trace, render_worker_count);
-      if (!tracing) std::fprintf(stderr, "[PS5-REACT] canvas trace: cannot write %s\n", trace);
+      if (!tracing) std::fprintf(stderr, "[ROA] canvas trace: cannot write %s\n", trace);
     }
-    if (network::start()) ps5_react_start_images();
-    ps5_react_start_sound();
+    if (network::start()) roa_start_images();
+    roa_start_sound();
     ErRuntimeConfig cfg = {};
     cfg.screen_width = width; cfg.screen_height = height; cfg.screen_scale = 2;
     cfg.memory_limit = kJsMemoryLimit;
     cfg.malloc_functions = js_heap_functions();
     cfg.max_stack_size = 1024 * 1024;
-    cfg.install_host_globals = ps5_react_install_host_api;
+    cfg.install_host_globals = roa_install_host_api;
     runtime_started = er_runtime_init(&cfg);
     if (!runtime_started) return false;
-    // PS5_REACT_PROFILE=<file> samples JavaScript; the folded stacks are written there on exit.
-    if (std::getenv("PS5_REACT_PROFILE")) profiler.start(JS_GetRuntime(er_runtime_context()), 1000);
+    // ROA_PROFILE=<file> samples JavaScript; the folded stacks are written there on exit.
+    if (std::getenv("ROA_PROFILE")) profiler.start(JS_GetRuntime(er_runtime_context()), 1000);
     if (controlled) {
       // Read when the bundle loads: Text reports its content to the inspector only then.
       JSContext* ctx = er_runtime_context();
       JSValue global = JS_GetGlobalObject(ctx);
-      JS_SetPropertyStr(ctx, global, "__ps5ReactInspecting", JS_TRUE);
+      JS_SetPropertyStr(ctx, global, "__roaInspecting", JS_TRUE);
       JS_FreeValue(ctx, global);
     }
     er_register_assets();
-    text_shaper::install(PS5_REACT_FONT_DIR, [](const char* line) { std::printf("[PS5-REACT] %s\n", line); });
+    text_shaper::install(ROA_FONT_DIR, [](const char* line) { std::printf("[ROA] %s\n", line); });
     FILE* file = std::fopen(path, "rb");
     if (!file) return false;
     bool ok = std::fseek(file, 0, SEEK_END) == 0;
@@ -323,21 +323,21 @@ struct Host {
 
   bool dispatch(const char* action) {
     JSValue arg = JS_NewString(er_runtime_context(), action);
-    return call_input("__ps5ReactDispatch", 1, &arg);
+    return call_input("__roaDispatch", 1, &arg);
   }
 
   // A controller touchpad's first finger at (x, y) 0..1, or lifted.
   bool touch(bool down, float x, float y) {
     JSContext* ctx = er_runtime_context();
     JSValue args[2] = {down ? JS_NewFloat64(ctx, x) : JS_NULL, down ? JS_NewFloat64(ctx, y) : JS_NULL};
-    return call_input("__ps5ReactTouch", 2, args);
+    return call_input("__roaTouch", 2, args);
   }
 
   // A touchscreen's first finger at (x, y) in screen px, or lifted: the mouse's left button here.
   bool screen_touch(bool down, float x, float y) {
     JSContext* ctx = er_runtime_context();
     JSValue args[2] = {down ? JS_NewFloat64(ctx, x) : JS_NULL, down ? JS_NewFloat64(ctx, y) : JS_NULL};
-    return call_input("__ps5ReactScreenTouch", 2, args);
+    return call_input("__roaScreenTouch", 2, args);
   }
 
   // The mouse in window points as a finger in screen px: the window shows the layout scaled.
@@ -402,9 +402,9 @@ struct Host {
         const std::string path = full ? arg.substr(0, arg.size() - 5) : arg;
         Control::reply(client, save_screenshot(path.c_str(), full ? 1 : 2) ? path : std::string("error: ") + std::strerror(errno));
       } else if (verb == "snapshot") {
-        Control::reply(client, call_js("__ps5ReactInspect", nullptr));
+        Control::reply(client, call_js("__roaInspect", nullptr));
       } else if (verb == "focus") {
-        Control::reply(client, call_js("__ps5ReactFocus", arg.c_str()) == "true" ? "ok" : "not found: " + arg);
+        Control::reply(client, call_js("__roaFocus", arg.c_str()) == "true" ? "ok" : "not found: " + arg);
       } else if (verb == "script") {
         // Runs input-script steps from now on, e.g. a touchpad swipe.
         char error[512] = {};
@@ -427,7 +427,7 @@ struct Host {
   bool play_script() {
     const char* action = script.next(SDL_GetTicks64());
     if (!action) return true;
-    if (log_frames) std::printf("[PS5-REACT] script: %s\n", action);
+    if (log_frames) std::printf("[ROA] script: %s\n", action);
     if (!std::strcmp(action, "quit")) running = false;
     else if (VirtualPad::is_step(action)) {
       char error[160];
@@ -439,10 +439,10 @@ struct Host {
       // With the GPU drawing, the software framebuffer holds only what it left to the CPU.
       const bool saved = host::resolve_path(name.c_str(), path, sizeof path) &&
                          (gpu.drawing() ? gpu.save_screen(presenter, path) : save_screenshot(path));
-      std::printf("[PS5-REACT] shot %s: %s\n", path, saved ? "saved" : std::strerror(errno));
+      std::printf("[ROA] shot %s: %s\n", path, saved ? "saved" : std::strerror(errno));
       if (saved && gpu.active() && !gpu.drawing()) {
         const std::string base(path, std::strlen(path) - 4);
-        std::printf("[PS5-REACT] %s\n", gpu.compare(er_software_framebuffer(), presenter, base).c_str());
+        std::printf("[ROA] %s\n", gpu.compare(er_software_framebuffer(), presenter, base).c_str());
       }
     } else if (!std::strncmp(action, "touch:", 6)) {
       float x = 0, y = 0;
@@ -456,7 +456,7 @@ struct Host {
 
   bool frame(bool swap = true) {
     if (const char* line = stats.start_frame(now_us()); line && log_frames) {
-      std::printf("[PS5-REACT] %s\n", line);
+      std::printf("[ROA] %s\n", line);
       std::fflush(stdout); // The dev watcher reads a pipe, where stdout is fully buffered.
     }
     // Input and JavaScript commit layout only; the commit after them paints the frame once.
@@ -520,12 +520,12 @@ struct Host {
       const char* held = pressed & 1 ? VirtualPad::action(i) : nullptr;
       if (held && !dispatch(held)) return false;
     }
-    ps5_react_set_gamepad(state);
+    roa_set_gamepad(state);
     stats.lap(FrameStats::input, now_us());
     er_perf_phase_begin(ER_PERF_PHASE_JS);
     er_runtime_pump();
     const std::int64_t step_us = now_us();
-    const bool stepped = ps5_react_frame(er_runtime_context(), std::min(50.0, (step_us - previous_step_us) / 1000.0));
+    const bool stepped = roa_frame(er_runtime_context(), std::min(50.0, (step_us - previous_step_us) / 1000.0));
     previous_step_us = step_us;
     er_perf_phase_end(ER_PERF_PHASE_JS);
     if (!stepped) {
@@ -538,7 +538,7 @@ struct Host {
     if (tracing) canvas_trace::commit_end();
     const bool redrawn = gpu.active() && gpu.replay();
     stats.lap(FrameStats::update, now_us());
-    if (ps5_react_exit_requested()) {
+    if (roa_exit_requested()) {
       running = false;
       return true;
     }
@@ -574,28 +574,28 @@ struct Host {
     if (const char* line = gc_scheduler.frame(JS_GetRuntime(er_runtime_context()), now_us(), repainted,
                                               static_cast<std::size_t>(width) * height);
         line && log_frames)
-      std::printf("[PS5-REACT] %s\n", line);
+      std::printf("[ROA] %s\n", line);
     const Uint32 now = SDL_GetTicks();
     embedded_renderer_tick(std::min<Uint32>(now - previous_tick, 50));
     previous_tick = now;
     if (const char* line = stats.end_frame(slow_frame_us); line && log_frames) {
-      std::printf("[PS5-REACT] %s\n", line);
+      std::printf("[ROA] %s\n", line);
       std::fflush(stdout);
     }
-    if (const int hz = ps5_react_take_refresh_request()) {
+    if (const int hz = roa_take_refresh_request()) {
       // The preview keeps the monitor's rate, but rebuilds the presenter as the PS5 host must, so that
       // path runs here too, and reports the requested rate as the one the display accepted.
       presenter.release();
       if (!presenter.init(width, height)) return false;
-      ps5_react_set_refresh_rate(hz);
-      std::printf("[PS5-REACT] refresh switch to %d Hz (the preview keeps the monitor's rate)\n", hz);
+      roa_set_refresh_rate(hz);
+      std::printf("[ROA] refresh switch to %d Hz (the preview keeps the monitor's rate)\n", hz);
       std::fflush(stdout);
     }
     // The PS5 host prints this with its memory line; here every two seconds while it changes.
     if (SDL_TICKS_PASSED(now, next_image_stats)) {
       next_image_stats = now + 2000;
       if (std::string line = images::stats(); line != image_stats) {
-        std::printf("[PS5-REACT] images: %s\n", line.c_str());
+        std::printf("[ROA] images: %s\n", line.c_str());
         std::fflush(stdout);
         image_stats = std::move(line);
       }
@@ -627,7 +627,7 @@ struct Host {
 bool expect(int focus, int count, int detail) {
   JSContext* ctx = er_runtime_context();
   JSValue global = JS_GetGlobalObject(ctx);
-  JSValue state = JS_GetPropertyStr(ctx, global, "__ps5ReactTestState");
+  JSValue state = JS_GetPropertyStr(ctx, global, "__roaTestState");
   const char* fields[] = {"focus", "count", "detail"};
   const int expected[] = {focus, count, detail};
   bool ok = true;
@@ -721,7 +721,7 @@ bool storage_test() {
   if (host::visit_directory_records(bytes + 13, 12, collect, &names) || !names.empty()) return false;
   // Exercise actual host bindings, sandbox path resolution, and error propagation.
   constexpr char script[] = R"JS((() => {
-    const network = globalThis.__ps5ReactNative.network;
+    const network = globalThis.__roaNative.network;
     if (!network || !network.version().includes("libcurl") ||
         !Array.isArray(network.poll())) return false;
     for (const invalid of [
@@ -740,13 +740,13 @@ bool storage_test() {
     if (!Number.isInteger(rangeProbe) || rangeProbe <= 0) return false;
     network.cancel(rangeProbe);
     // With any sound baked, a second play while the first still sounds is skipped.
-    const sound = globalThis.__ps5ReactNative.sound;
-    const baked = globalThis.__ps5ReactTestSound;
+    const sound = globalThis.__roaNative.sound;
+    const baked = globalThis.__roaTestSound;
     if (baked && (sound.play(baked, 0, 0) !== true || sound.play(baked, 0, 0) !== false)) return false;
     // Baked names drop the extension, so no import is named this.
     try { sound.play('not-baked.wav', 1, 0); return false; }
     catch (error) { if (!error.message.includes('sound.play not-baked.wav')) return false; }
-    const fs = globalThis.__ps5ReactNative.fs;
+    const fs = globalThis.__roaNative.fs;
     const testName = `listing-test-${Date.now()}.txt`;
     const testPath = `/download0/${testName}`;
     fs.writeFile(testPath, 'listing test', false);
@@ -809,8 +809,8 @@ bool storage_test() {
   JSContext* ctx = er_runtime_context();
   // The first sound the app baked, whatever it is named; none leaves only the unknown-name check.
   JSValue global = JS_GetGlobalObject(ctx);
-  JS_SetPropertyStr(ctx, global, "__ps5ReactTestSound",
-                    ps5_react_sound_count ? JS_NewString(ctx, ps5_react_sounds[0].name) : JS_NULL);
+  JS_SetPropertyStr(ctx, global, "__roaTestSound",
+                    roa_sound_count ? JS_NewString(ctx, roa_sounds[0].name) : JS_NULL);
   JS_FreeValue(ctx, global);
   JSValue result = JS_Eval(ctx, script, sizeof script - 1, "storage-test.js", JS_EVAL_TYPE_GLOBAL);
   const bool ok = !JS_IsException(result) && JS_ToBool(ctx, result) == 1;
@@ -869,25 +869,25 @@ int main(int argc, char** argv) {
   bool ok = host.start();
   if (ok && testing) ok = color_test(host);
   if (ok && !testing) {
-    if (const char* path = std::getenv("PS5_REACT_CONTROL")) {
+    if (const char* path = std::getenv("ROA_CONTROL")) {
       host.controlled = host.control.start(path);
-      if (!host.controlled) std::fprintf(stderr, "PS5_REACT_CONTROL: cannot listen on %s: %s\n", path, std::strerror(errno));
-      else std::printf("[PS5-REACT] control: %s\n", path);
+      if (!host.controlled) std::fprintf(stderr, "ROA_CONTROL: cannot listen on %s: %s\n", path, std::strerror(errno));
+      else std::printf("[ROA] control: %s\n", path);
     }
   }
   if (ok) ok = host.boot(argv[1]);
   if (ok && testing) ok = self_test(host);
   else if (ok) {
-    if (const char* ms = std::getenv("PS5_REACT_SLOW_FRAME_MS")) {
+    if (const char* ms = std::getenv("ROA_SLOW_FRAME_MS")) {
       char* rest = nullptr;
       const long value = std::strtol(ms, &rest, 10);
       if (*ms && !*rest && value > 0 && value <= 60000) host.slow_frame_us = static_cast<Uint32>(value) * 1000;
-      else std::fprintf(stderr, "PS5_REACT_SLOW_FRAME_MS: expected milliseconds (1-60000), got '%s'\n", ms);
+      else std::fprintf(stderr, "ROA_SLOW_FRAME_MS: expected milliseconds (1-60000), got '%s'\n", ms);
     }
-    if (const char* text = std::getenv("PS5_REACT_INPUT_SCRIPT")) {
+    if (const char* text = std::getenv("ROA_INPUT_SCRIPT")) {
       char error[160];
       ok = host.script.parse(text, error, sizeof error);
-      if (!ok) std::fprintf(stderr, "PS5_REACT_INPUT_SCRIPT: %s\n", error);
+      if (!ok) std::fprintf(stderr, "ROA_INPUT_SCRIPT: %s\n", error);
     }
     if (ok && argc > 2 && !std::strcmp(argv[2], "--fullscreen")) {
       ok = SDL_SetWindowFullscreen(host.window, SDL_WINDOW_FULLSCREEN_DESKTOP) == 0;
@@ -897,7 +897,7 @@ int main(int argc, char** argv) {
     while (ok && host.running) ok = host.frame();
     if (host.profiler.running()) {
       host.profiler.stop();
-      const char* path = std::getenv("PS5_REACT_PROFILE");
+      const char* path = std::getenv("ROA_PROFILE");
       std::printf("profile: %llu samples, %s %s\n", static_cast<unsigned long long>(host.profiler.samples()),
                   host.profiler.write(path) ? "saved to" : "could not write", path);
     }

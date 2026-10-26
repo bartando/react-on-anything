@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Additional attribution term: see LICENSE-ATTRIBUTION.
 import {useState} from 'react';
-import {AppRegistry, View, Text, FocusScope, useFocus} from '@ps5-react/core';
+import {AppRegistry, View, Text, FocusScope, useFocus} from '@react-on-anything/core';
 import {SpacingPage, FlexPage} from './pages/layout.jsx';
 import {ColorPage, BorderPage} from './pages/paint.jsx';
 import {TypePage} from './pages/type.jsx';
@@ -42,7 +42,7 @@ function App() {
     <View className="w-screen h-screen bg-ink px-10 py-8 gap-6">
       <View className="flex-row items-end justify-between">
         <View className="gap-1">
-          <Text className="font-inter text-xs text-accent tracking-widest">PS5 REACT · CLASSNAME</Text>
+          <Text className="font-inter text-xs text-accent tracking-widest">REACT ON ANYTHING · CLASSNAME</Text>
           <Text className="font-inter text-xl text-white leading-none">Tailwind Gallery</Text>
         </View>
         <Text className="font-inter text-sm text-slate-500">{page + 1} / {PAGES.length}</Text>

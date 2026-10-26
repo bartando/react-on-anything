@@ -236,7 +236,7 @@ def generated_config(config, directory):
                    "NETWORKING": int(config.get("networking", False)),
                    "VIDEO": int(config.get("video", False))}
     (directory / "app_config.hpp").write_text("#pragma once\n" + "".join(
-        f"#define PS5_REACT_{key} {json.dumps(value)}\n" for key, value in definitions.items()))
+        f"#define ROA_{key} {json.dumps(value)}\n" for key, value in definitions.items()))
 
 
 def bundle(app, er):

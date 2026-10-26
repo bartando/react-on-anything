@@ -275,7 +275,7 @@ def main():
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     origin = f"http://127.0.0.1:{server.server_port}"
-    with tempfile.TemporaryDirectory(prefix="ps5-react-network-") as temporary:
+    with tempfile.TemporaryDirectory(prefix="react-on-anything-network-") as temporary:
         directory = Path(temporary)
         binary = compile_client(directory)
 

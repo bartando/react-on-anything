@@ -41,8 +41,8 @@ constexpr unsigned max_depth = 128;
 // ShadowMount mounts these images; packages are installed by the console.
 constexpr std::array<std::string_view, 4> image_extensions{".ffpfsc", ".ffpfs", ".ffpkg", ".exfat"};
 constexpr std::array<std::string_view, 2> package_extensions{".pkg", ".fpkg"};
-const char* receipt_name = ".ps5-react-extraction";
-const char* stage_name = ".ps5-react-stage";
+const char* receipt_name = ".react-on-anything-extraction";
+const char* stage_name = ".react-on-anything-stage";
 
 struct Job {
   Request request;
@@ -485,7 +485,7 @@ std::string extract(Job& job, archive* archive, const std::string& staging, std:
     if (!name) return "Archive has a file name this console cannot read.";
     const auto type = archive_entry_filetype(entry);
     const bool link = archive_entry_symlink(entry) || archive_entry_hardlink(entry);
-    const bool reserved = name && std::string(name).find(".ps5-react-") != std::string::npos;
+    const bool reserved = name && std::string(name).find(".react-on-anything-") != std::string::npos;
     if (!safe(name) || reserved || link || (type != AE_IFREG && type != AE_IFDIR)) return "Archive contains an unsafe path, link or special file.";
     const auto size = archive_entry_size(entry);
     if (size < 0 || static_cast<std::uint64_t>(size) > request.max_bytes - declared_total) return "Archive exceeds the extraction size limit.";
@@ -558,7 +558,7 @@ std::string rar_request(const Request& request, const std::string& staging) {
   constexpr char digits[] = "0123456789abcdef";
   std::string text = "RARX1\nthreads " + std::to_string(rar_threads(request)) + "\nwindow " + std::to_string(rar_window) + "\nlimit " + std::to_string(request.max_bytes) + "\n";
   for (auto extension : image_extensions) text += "flatten " + std::string(extension) + "\n";
-  text += "reserved .ps5-react-\n";
+  text += "reserved .react-on-anything-\n";
   if (request.stream) text += "wait 1\n";
   if (!request.password.empty()) {
     text += "password ";
@@ -580,7 +580,7 @@ std::string rar_file(Job& job, const std::string& staging, const std::string& re
   char* end = nullptr;
   const std::uint64_t size = std::strtoull(size_text.c_str(), &end, 10);
   struct stat st;
-  if (size_text.empty() || *end || !safe(path.c_str()) || path.find(".ps5-react-") != std::string::npos || !plain_path(staging, path) ||
+  if (size_text.empty() || *end || !safe(path.c_str()) || path.find(".react-on-anything-") != std::string::npos || !plain_path(staging, path) ||
       lstat((staging + "/" + path).c_str(), &st) || !S_ISREG(st.st_mode) || static_cast<std::uint64_t>(st.st_size) != size)
     return "Archive contains an unsafe path, link or special file.";
   if (size > job.request.max_bytes - total) return "Archive exceeds the extraction size limit.";

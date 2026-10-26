@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Additional attribution term: see LICENSE-ATTRIBUTION.
 import {useEffect, useState} from 'react';
-import {AppRegistry, View, Text, FocusScope, motion, AnimatePresence, transitions, useFocus} from '@ps5-react/core';
+import {AppRegistry, View, Text, FocusScope, motion, AnimatePresence, transitions, useFocus} from '@react-on-anything/core';
 import {FocusPage} from './pages/focus.jsx';
 import {ClassesPage} from './pages/classes.jsx';
 import {AmbientPage} from './pages/ambient.jsx';
@@ -44,7 +44,7 @@ function App() {
     <View className="w-screen h-screen bg-ink px-10 py-8 gap-6">
       <View className="flex-row items-end justify-between">
         <View className="gap-1">
-          <Text className="font-inter text-caption text-accent tracking-widest">PS5 REACT · MOTION</Text>
+          <Text className="font-inter text-caption text-accent tracking-widest">REACT ON ANYTHING · MOTION</Text>
           <Text className="font-inter text-title text-white leading-none">Motion Lab</Text>
         </View>
         <Text className="font-inter text-hint text-slate-500">{page + 1} / {PAGES.length}</Text>

@@ -114,14 +114,14 @@ def uudecode(source,destination):
  return destination
 
 def main():
- with tempfile.TemporaryDirectory(prefix="ps5-react-archives-") as tmp:
+ with tempfile.TemporaryDirectory(prefix="react-on-anything-archives-") as tmp:
   root=Path(tmp);binary=root/"archive-client"
   prefix=subprocess.check_output(["brew","--prefix","libarchive"],text=True).strip()
   xz=subprocess.check_output(["brew","--prefix","xz"],text=True).strip()
   crypto=subprocess.check_output(["brew","--prefix","openssl@3"],text=True).strip()
   sources=[ROOT/"tools/tests/archive_client.cpp",ROOT/"native/shared/archives.cpp",ROOT/"native/shared/archive_preflight.cpp",ROOT/"native/shared/rar5_password.cpp",ROOT/"native/shared/archive_writer.cpp",ROOT/"native/desktop/rar_worker_process.cpp"]
   # RAR volumes go to rar-extract, as in the app; the other formats stay with libarchive.
-  os.environ["PS5_REACT_RAR_WORKER"]=str(build_host(root/"rar-extract"))
+  os.environ["ROA_RAR_WORKER"]=str(build_host(root/"rar-extract"))
   subprocess.run(["clang++","-std=c++20","-O2","-Wall","-Wextra","-Werror","-pthread","-I",str(ROOT/"native/shared"),"-I",prefix+"/include","-I",xz+"/include","-I",crypto+"/include",*map(str,sources),"-L",prefix+"/lib","-L",xz+"/lib","-L",crypto+"/lib","-larchive","-llzma","-lcrypto","-lz","-o",str(binary)],check=True)
   def run(name,parts,limit=1024*1024,password=None):
    args=[] if password is None else ["--password",password]
@@ -135,7 +135,7 @@ def main():
   # at launch. Every folder and file is open to everyone, the extraction root included.
   def open_to_all(tree):
    for p in [tree,*tree.rglob("*")]:
-    if p.name.startswith(".ps5-react-"):continue
+    if p.name.startswith(".react-on-anything-"):continue
     mode=p.stat().st_mode&0o777
     assert mode==(0o777 if p.is_dir() else 0o666),(p,oct(mode))
   app=root/"app.zip"
@@ -251,11 +251,11 @@ def main():
   # rar-extract reads what the set unpacks to from its headers before extracting; libarchive cannot.
   assert "rar worker finishing" in rar_phases and f"total {len(DATA)}" in rar_phases
   assert "total 0" in phases("phase-total-zip",[several])
-  older=root/"older-worker";older.write_text(f"#!/bin/sh\n'{os.environ['PS5_REACT_RAR_WORKER']}' | grep --line-buffered -vx s\n");older.chmod(0o755)
-  assert "rar worker finishing" not in phases("phase-older-rar",[root/"plain.rar"],PS5_REACT_RAR_WORKER=str(older))
+  older=root/"older-worker";older.write_text(f"#!/bin/sh\n'{os.environ['ROA_RAR_WORKER']}' | grep --line-buffered -vx s\n");older.chmod(0o755)
+  assert "rar worker finishing" not in phases("phase-older-rar",[root/"plain.rar"],ROA_RAR_WORKER=str(older))
   assert (root/"phase-older-rar/game.ffpfsc").read_bytes()==DATA
   for name,entry,link in [("rar-traversal","../escape",None),("rar-absolute","/escape",None),("rar-backslash","a\\..\\..\\escape",None),
-                          ("rar-dotdot-inner","a/../../escape",None),("rar-reserved","x/.ps5-react-extraction",None),("rar-symlink","link","../escape")]:
+                          ("rar-dotdot-inner","a/../../escape",None),("rar-reserved","x/.react-on-anything-extraction",None),("rar-symlink","link","../escape")]:
    p=root/(name+".rar");p.write_bytes(plain_rar5(entry,DATA,link))
    result=run(name,[p])
    assert result[0]=="failed" and "unsafe" in result[-1],result
@@ -282,7 +282,7 @@ def main():
    request="RARX1\nwindow 33554432\nlimit 1048576\n"+("" if password is None else f"password {password.encode().hex()}\n")
    request+=f"dest {dest}\n"+"".join(f"source {p}\n" for p in parts)+"end\n"
    # Its input stays open: the worker reads a closed one as the engine gone.
-   process=subprocess.Popen([os.environ["PS5_REACT_RAR_WORKER"]],stdin=subprocess.PIPE,stdout=subprocess.PIPE,text=True)
+   process=subprocess.Popen([os.environ["ROA_RAR_WORKER"]],stdin=subprocess.PIPE,stdout=subprocess.PIPE,text=True)
    process.stdin.write(request);process.stdin.flush()
    out=process.stdout.read();process.stdin.close();process.wait(timeout=20)
    return [line for line in out.splitlines() if line[:2] not in ("p ","t ") and line!="k"]
@@ -387,7 +387,7 @@ def main():
   with sparse.open("wb") as f:f.write(b"head"*1000);f.seek(8*1024*1024);f.write(b"tail"*1000)
   p=root/"sparse.tar";subprocess.run([prefix+"/bin/bsdtar","--read-sparse","-cf",str(p),"-C",str(root),"sparse.bin"],check=True)
   assert run("sparse",[p],16*1024*1024)[0]=="completed"
-  assert (root/"sparse/.ps5-react-extraction").read_text().splitlines()[1]==hashlib.sha256(sparse.read_bytes()).hexdigest()+"|sparse.bin"
+  assert (root/"sparse/.react-on-anything-extraction").read_text().splitlines()[1]==hashlib.sha256(sparse.read_bytes()).hexdigest()+"|sparse.bin"
   assert run("missing-part",parts[:1])[0]=="failed"
   assert not (root/"missing-part").exists()
   rar_parts=[]
@@ -396,7 +396,7 @@ def main():
   assert len(rar_parts)==3
   result=run("rar-multipart",rar_parts)
   assert result[0]=="completed",result
-  assert any(p.is_file() and p.stat().st_size>0 for p in (root/"rar-multipart").rglob("*") if p.name!=".ps5-react-extraction")
+  assert any(p.is_file() and p.stat().st_size>0 for p in (root/"rar-multipart").rglob("*") if p.name!=".react-on-anything-extraction")
   open_to_all(root/"rar-multipart")
   # A set extracted while it downloads: each later volume appears under its final name by a rename, over
   # the empty file that reserves the name on the console.
@@ -412,7 +412,7 @@ def main():
   blobs=[p.read_bytes() for p in rar_parts]
   result,names=stream("rar-stream",blobs,0.6)
   assert result[0]=="completed",result
-  tree=lambda d:{str(p.relative_to(d)):p.read_bytes() for p in d.rglob("*") if p.is_file() and not p.name.startswith(".ps5-react-")}
+  tree=lambda d:{str(p.relative_to(d)):p.read_bytes() for p in d.rglob("*") if p.is_file() and not p.name.startswith(".react-on-anything-")}
   assert tree(root/"rar-stream")==tree(root/"rar-multipart"),(sorted(tree(root/"rar-stream")),sorted(tree(root/"rar-multipart")))
   # Its receipt names every volume, as a run after the download writes it: a later run recovers it.
   assert run("rar-stream",names)[0]=="completed"
@@ -437,17 +437,17 @@ def main():
   # A worker that goes silent may still write into its staging: the next extraction stages beside it,
   # and a later launch removes what it left once the set is extracted.
   silent=root/"silent-worker";silent.write_text("#!/bin/sh\nexec sleep 60\n");silent.chmod(0o755)
-  real=os.environ["PS5_REACT_RAR_WORKER"];os.environ["PS5_REACT_RAR_WORKER"]=str(silent)
+  real=os.environ["ROA_RAR_WORKER"];os.environ["ROA_RAR_WORKER"]=str(silent)
   try:out=subprocess.check_output([str(binary),str(root/"rar-silent"),str(1024*1024),*map(str,rar_parts),"--cancel-after","100","--again",real],text=True,timeout=60).splitlines()
-  finally:os.environ["PS5_REACT_RAR_WORKER"]=real
+  finally:os.environ["ROA_RAR_WORKER"]=real
   assert out[0]=="cancelled" and out[3]=="completed",out
-  assert (root/"rar-silent.extracting/.ps5-react-stage").exists() and not (root/"rar-silent.extracting-1").exists()
+  assert (root/"rar-silent.extracting/.react-on-anything-stage").exists() and not (root/"rar-silent.extracting-1").exists()
   assert tree(root/"rar-silent")==tree(root/"rar-multipart")
   assert run("rar-silent",rar_parts)[0]=="completed" and not (root/"rar-silent.extracting").exists()
   # A process interruption leaves owned staging; the next extraction restarts safely.
   st=zip.stat();identity=f"{zip}|{st.st_dev}|{st.st_ino}|{st.st_size}|{st.st_mtime_ns//10**9}|{st.st_mtime_ns%10**9}\n"
   staging=root/"interrupted.extracting";staging.mkdir();(staging/"unfinished").write_bytes(b"partial")
-  (staging/".ps5-react-stage").write_text("P5ST001:"+hashlib.sha256(identity.encode()).hexdigest()+"\n")
+  (staging/".react-on-anything-stage").write_text("P5ST001:"+hashlib.sha256(identity.encode()).hexdigest()+"\n")
   assert run("interrupted",[zip])[0]=="completed"
   assert (root/"interrupted/game.ffpfsc").read_bytes()==DATA
   orphan=root/"orphan.extracting";orphan.mkdir();(orphan/"keep").write_bytes(b"unowned")

@@ -24,8 +24,8 @@ app's data is on the SD card:
 | `sdmc:/switch/<app>/options.env` | `KEY=VALUE` lines set before boot |
 | `nxlink -a <address> -s <app>.nro KEY=VALUE ...` | the same options for one run, on top of the file's |
 
-Options: `PS5_REACT_GPU=0` draws with the software rasterizer, `PS5_REACT_LAYOUT=720` or `1080` picks a
-layout whatever the screen, `PS5_REACT_BOOST=0` leaves the clocks alone, `PS5_REACT_INPUT_SCRIPT` runs a
+Options: `ROA_GPU=0` draws with the software rasterizer, `ROA_LAYOUT=720` or `1080` picks a
+layout whatever the screen, `ROA_BOOST=0` leaves the clocks alone, `ROA_INPUT_SCRIPT` runs a
 script as on the desktop.
 
 ## Clocks

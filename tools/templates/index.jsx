@@ -1,5 +1,5 @@
 import {useState} from 'react';
-import {AppRegistry, View, Text, FocusScope} from '@ps5-react/core';
+import {AppRegistry, View, Text, FocusScope} from '@react-on-anything/core';
 import {useInterfaceSounds} from './sounds.js';
 
 const items = ['Play', 'Settings', 'About'];

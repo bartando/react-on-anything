@@ -25,7 +25,7 @@ function inert(scope) {
 
 /** @param {import('./manager.js').FocusManager} manager */
 export function installInspector(manager) {
-  globalThis.__ps5ReactInspect = () => JSON.stringify([...manager.nodes].map(node => {
+  globalThis.__roaInspect = () => JSON.stringify([...manager.nodes].map(node => {
     const rect = screenRect(node);
     const round = value => Math.round(value ?? 0);
     return {
@@ -40,5 +40,5 @@ export function installInspector(manager) {
         && rect.x + rect.width > 0 && rect.y + rect.height > 0),
     };
   }));
-  globalThis.__ps5ReactFocus = key => manager.focus(key);
+  globalThis.__roaFocus = key => manager.focus(key);
 }

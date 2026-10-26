@@ -12,7 +12,7 @@ import {test} from 'node:test';
 import {fileURLToPath} from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
-const er = process.env.PS5_REACT_ER ?? resolve(here, '../../../.deps/embeddedReact');
+const er = process.env.ROA_ER ?? resolve(here, '../../../.deps/embeddedReact');
 const modules = resolve(er, 'bridges/quickjs/js/node_modules');
 const esbuild = createRequire(resolve(modules, 'x.js'))('esbuild');
 

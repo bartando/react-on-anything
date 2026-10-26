@@ -8,7 +8,7 @@ engine/rendering/image_scaler.h, engine/rendering/transform.c,
 engine/rendering/transform.h, engine/scene/compositor.c,
 engine/scene/er_node_internal.h and engine/tests/rendering/CMakeLists.txt;
 adds engine/tests/rendering/test_transform_cache.c.
-Not proposed upstream: PS5 React maintains this change here.
+Not proposed upstream: React on Anything maintains this change here.
 
 A scaled or rotated node is painted by rendering its subtree into a transform
 source and mapping that out. The capture ran on every frame of a scale

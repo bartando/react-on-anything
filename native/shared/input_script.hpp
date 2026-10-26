@@ -18,7 +18,7 @@ struct GamepadState;
 // frame, then `touch:up`, which the host passes on as touchpad input; `tap:X:Y` and
 // `drag:X1:Y1:X2:Y2` put a finger on a touchscreen in screen px the same way (`screen:X,Y` samples,
 // then `screen:up`), and `finger:X:Y` leaves one there, moved by the next, until `finger:up`.
-// VirtualPad's steps hold buttons and triggers. The desktop reads PS5_REACT_INPUT_SCRIPT, the PS5 /app0/dev/input-script.txt.
+// VirtualPad's steps hold buttons and triggers. The desktop reads ROA_INPUT_SCRIPT, the PS5 /app0/dev/input-script.txt.
 class InputScript {
 public:
   // Replaces the script. On a bad step returns false and describes it in `error`.

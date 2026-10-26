@@ -5,7 +5,7 @@ revision pinned in dependencies.lock.json, in the patch order listed there.
 Changed files: engine/include/native_renderer.h,
 engine/core/{er_parallel.c,renderer_internal.h},
 engine/rendering/{arc.c,vector.c}, engine/scene/{compositor.c,er_node_internal.h}
-and engine/tests/rendering/test_parallel.c. Not proposed upstream: PS5 React
+and engine/tests/rendering/test_parallel.c. Not proposed upstream: React on Anything
 maintains this change here.
 
 The sliced parallel commit refused any scene holding an Arc or a vector node,

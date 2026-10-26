@@ -5,11 +5,11 @@ revision pinned in dependencies.lock.json, after the patches listed before this
 one there. Changed files: bridges/quickjs/js/src/renderer.js,
 bridges/quickjs/js/src/embedded-react/index.js and
 bridges/quickjs/js/src/embedded-react/index.d.ts.
-Not proposed upstream: PS5 React maintains this change here.
+Not proposed upstream: React on Anything maintains this change here.
 
 The bridge runs its frame pump and native events inside React's batchedUpdates,
 but a host's own per-frame JavaScript callback runs outside it, where every
-setState renders on its own: PS5 React's frame callback delivering ten images
+setState renders on its own: React on Anything's frame callback delivering ten images
 and stepping a virtualized list rendered eleven times. The package now exports
 the reconciler's batchedUpdates as unstable_batchedUpdates, the name React
 Native gives it.

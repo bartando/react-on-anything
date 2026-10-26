@@ -92,7 +92,7 @@ void route_bitstream(BurstRing* ring) { bitstream_ring.store(ring, std::memory_o
 void set_bitstream_muted(bool muted) { bitstream_muted.store(muted, std::memory_order_relaxed); }
 } // namespace video_audio
 
-JSValue ps5_react_audio_output_api(JSContext* ctx) {
+JSValue roa_audio_output_api(JSContext* ctx) {
   JSValue out = JS_NewObject(ctx);
   JS_SetPropertyStr(ctx, out, "capabilities", JS_NewCFunction(ctx, capabilities, "capabilities", 0));
   return out;

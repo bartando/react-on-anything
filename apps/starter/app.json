@@ -1,8 +1,8 @@
 {
   "$schema": "../../app.schema.json",
   "titleId": "PPSA99053",
-  "contentId": "UP9000-PPSA99053_00-PS5REACTSTARTER1",
-  "name": "PS5 React Starter",
+  "contentId": "UP9000-PPSA99053_00-ROASTARTER000001",
+  "name": "React on Anything Starter",
   "version": "01.000.000",
   "resolution": "auto",
   "refreshRate": 60,

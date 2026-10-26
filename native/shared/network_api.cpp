@@ -211,7 +211,7 @@ JSValue poll(JSContext* ctx, JSValueConst, int, JSValueConst*) {
 JSValue info(JSContext* ctx, JSValueConst, int, JSValueConst*) { return JS_NewString(ctx, network::version()); }
 } // namespace
 
-JSValue ps5_react_network_api(JSContext* ctx) {
+JSValue roa_network_api(JSContext* ctx) {
   JSValue out = JS_NewObject(ctx);
   for (const auto& item : {std::pair<const char*, JSCFunction*>{"download", &download}, {"request", &request}, {"cancel", &cancel}, {"poll", &poll}, {"version", &info}})
     JS_SetPropertyStr(ctx, out, item.first, JS_NewCFunction(ctx, item.second, item.first, 0));

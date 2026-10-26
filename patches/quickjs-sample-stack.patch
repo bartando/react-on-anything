@@ -4,9 +4,9 @@ Modified from QuickJS-ng (MIT, Copyright Fabrice Bellard, Charlie Gordon, Ben
 Noordhuis and the QuickJS-ng contributors) at the revision pinned in
 dependencies.lock.json.
 Changed files: quickjs.c and quickjs.h.
-Not proposed upstream: PS5 React maintains this change here.
+Not proposed upstream: React on Anything maintains this change here.
 
-PS5 React's JavaScript profiler (native/shared/js_profiler.cpp) samples the
+React on Anything's JavaScript profiler (native/shared/js_profiler.cpp) samples the
 stack about once a millisecond from the interrupt handler. JS_SampleStack walks
 the runtime's stack frames and reports each function's name and the line its
 definition starts on, reading names from the bytecode or, for a native

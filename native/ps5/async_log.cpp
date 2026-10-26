@@ -39,7 +39,7 @@ void* drain(void*) {
       line[0] = '\0';
     }
     pthread_mutex_unlock(&mutex);
-    if (lost) hui::sys::log("[PS5-REACT] %u log lines dropped", lost);
+    if (lost) hui::sys::log("[ROA] %u log lines dropped", lost);
     if (line[0]) hui::sys::log("%s", line);
     pthread_mutex_lock(&mutex);
   }

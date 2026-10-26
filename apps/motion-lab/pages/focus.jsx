@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Additional attribution term: see LICENSE-ATTRIBUTION.
 import {useState} from 'react';
-import {View, Text, motion, transitions, tw} from '@ps5-react/core';
+import {View, Text, motion, transitions, tw} from '@react-on-anything/core';
 import {Page, caption} from '../ui.jsx';
 
 const items = ['Library', 'Store', 'Media', 'Friends', 'Trophies',

@@ -1,6 +1,6 @@
 # Styling with className
 
-PS5 React compiles a **subset of Tailwind CSS v3 utilities** into style objects
+React on Anything compiles a **subset of Tailwind CSS v3 utilities** into style objects
 at build time, similar in spirit to NativeWind but with no runtime. The
 renderer still receives only JavaScript style objects; no CSS is parsed on the
 PS5. This is not full Tailwind compatibility: every supported utility is listed
@@ -9,7 +9,7 @@ below, and anything else fails the build with a source location and a reason.
 ## Quick example
 
 ```jsx
-import {AppRegistry, View, Text, FocusScope, tw, useIsFocused} from '@ps5-react/core';
+import {AppRegistry, View, Text, FocusScope, tw, useIsFocused} from '@react-on-anything/core';
 
 const title = tw`text-4xl font-bold text-white`;
 
@@ -48,7 +48,7 @@ index.jsx ── esbuild ── Babel plugin (tools/tailwind) ── bundle with
 ```
 
 1. During bundling, a Babel plugin visits every `className` attribute and every
-   `tw` template imported from `@ps5-react/core`.
+   `tw` template imported from `@react-on-anything/core`.
 2. Each class is resolved against the theme (`tools/tailwind/theme.mjs`, merged
    with the app's `tailwind.config.js`) and converted to engine style keys.
 3. Lengths are scaled to the render resolution and rounded to integers.
@@ -306,7 +306,7 @@ rotate, scale. A variant such as `focused:scale-105` keeps the element's base
 `rotate-*` or `translate-*`. Percentage translations are rejected.
 
 `Svg`, `Path`, `Circle`, `Rect`, `Line`, and `G` are exported from
-`@ps5-react/core` for icons and other vector shapes; they take the Embedded
+`@react-on-anything/core` for icons and other vector shapes; they take the Embedded
 React SVG props (`d`, `stroke`, `strokeWidth`, `fill`) rather than classes. Up
 to 128 `<Svg>` nodes can be mounted at once (`ERUI_MAX_VECTOR_NODES`); further
 ones draw nothing. The 32 most recent static ones skip re-flattening on repaint
@@ -352,7 +352,7 @@ Text styles are not inherited, so a `Text` inside a focused `View` needs its own
 
 An element is focusable when it has a `focusable` prop (other than
 `focusable={false}`), an `onPress` prop, or is `Pressable` from
-`@ps5-react/core` ([NAVIGATION.md](NAVIGATION.md)). On such an element,
+`@react-on-anything/core` ([NAVIGATION.md](NAVIGATION.md)). On such an element,
 `focused:` (and its aliases) and `pressed:` need no prop: when the element does
 not pass `focused`/`pressed` itself, the variant reads the element's own focus
 state through a style function:
@@ -382,12 +382,12 @@ state through a style function:
 
 Animation classes compile to the motion props described in
 [ANIMATION.md](ANIMATION.md); they never reach `style`. An element that uses
-them must be a `View`, `Text`, or `Image` imported from `@ps5-react/core`
+them must be a `View`, `Text`, or `Image` imported from `@react-on-anything/core`
 (aliases such as `import {View as Box}` count). The build rewrites it to the
 matching motion component and adds the import once per file:
 
 ```jsx
-import {View} from '@ps5-react/core';
+import {View} from '@react-on-anything/core';
 
 <View focused={isFocused}
   className="animate-in fade-in slide-in-from-bottom-4 duration-300 transition focused:scale-105" />
@@ -523,7 +523,7 @@ const card = 'rounded-xl bg-slate-800 p-4';      // module or function const
 ## tw templates
 
 ```jsx
-import {tw, Text} from '@ps5-react/core';
+import {tw, Text} from '@react-on-anything/core';
 
 const heading = tw`text-3xl font-semibold text-white`;
 // <Text style={heading}>Now playing</Text>
@@ -537,7 +537,7 @@ function Badge({live}) {
 `tw` compiles to a style object (or a style array when it contains conditions)
 at build time and accepts the same dynamic forms as `className`. Variants are
 not allowed because there is no element to read props from. `tw` must be
-imported from `@ps5-react/core`; calling it at runtime without the build step
+imported from `@react-on-anything/core`; calling it at runtime without the build step
 throws.
 
 ## Configuration

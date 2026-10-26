@@ -21,7 +21,7 @@ not identify the cause; the same executable worked through the folder workflow.
 It does not automatically inherit the proof of concept's hardware status.
 The build receipt sets `hardware_tested: false` pending a test of that artifact.
 
-Validation procedure: launch PS5 React Starter, move focus, update the counter,
+Validation procedure: launch React on Anything Starter, move focus, update the counter,
 return, exit with Options, and verify the configured timeout. Changes to the
 host or SDK need new validation. Desktop tests and ELF checks do not establish
 PS5 execution or support for other firmware/loader combinations.
@@ -369,7 +369,7 @@ monitor. Read-only probes sent as payloads, not the app:
 Not checked: the app itself (`apps/video-lab` as `PPSA99064` was built and uploaded, but
 ShadowMountPlus did not register the new title within 25 minutes, and another app was running on
 the console), so `sceAudioOutExConfigureOutput` and `sceAudioOutExOpen` have not been called from
-PS5 React, nor has a bitstream reached a sink. SlopFin reports them working from its app on
+React on Anything, nor has a bitstream reached a sink. SlopFin reports them working from its app on
 firmware 8.20, with AC-3, E-AC-3 and DTS heard on a TV. A/V sync with a real receiver is unmeasured.
 
 ## Not yet validated
@@ -377,13 +377,13 @@ firmware 8.20, with AC-3, E-AC-3 and DTS heard on a TV. A/V sync with a real rec
 - `Power.keepAwake` (ABI v4, `sceSystemServicePowerTick` every 30 s): builds,
   but no console has been observed staying out of rest mode with it on.
 - HDMI audio passthrough (`<Video audioOutput>`, ABI v13): the bitstream output has not been opened
-  from a PS5 React app; see above.
+  from a React on Anything app; see above.
 
 ## Remote images — 2026-10-06
 
 Overdrive (`PPSA99058`, game-store `65a3e58`) on the same PS5 Slim Digital,
 firmware 13.60, kstuff, console filesystem elevation through the bundled
-helper. A development build of ps5-react `b6047eb` with an uncommitted
+helper. A development build of react-on-anything `b6047eb` with an uncommitted
 per-frame motion log, screenshot command and heap log loaded every cover,
 hero, logo and screenshot from the Steam and Spectrum CDNs; console
 screenshots show them on browse and game pages.
@@ -402,7 +402,7 @@ detail. Downloads were not exercised.
 
 ### Image loading latency — 2026-10-06
 
-Same console, Overdrive game-store `ee3d2a4`, ps5-react `6bfdbec` (official
+Same console, Overdrive game-store `ee3d2a4`, react-on-anything `6bfdbec` (official
 eboot SHA-256 `9f6486d9ddf6037762dfd3a579038b40622efb95afa795634d2fa57e0f943569`).
 Per-image timings came from a temporary log in a development build; the 76
 images a cold launch mounts before its first screenshot:

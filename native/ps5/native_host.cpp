@@ -68,7 +68,7 @@ void hui_heap_stats(std::size_t* live_bytes, std::size_t* peak_bytes, std::size_
 
 // Extraction steps go to the console log, so the crash log keeps the last one before a fault.
 bool archives::list_directory(const char* path, void (*visit)(const char*, void*), void* user) { return host::read_dir(path, visit, user); }
-void archives::trace(const char* step, const char* detail) { async_log::write("[PS5-REACT] archive %s %s", step, detail); }
+void archives::trace(const char* step, const char* detail) { async_log::write("[ROA] archive %s %s", step, detail); }
 // The extraction's write ring: larger on larger heaps, and none (inline writes, as before) unless the
 // heap still has room for the 64 MiB decoder budget the preflight admits, the ring, and a margin.
 std::size_t archives::pipeline_bytes() {
@@ -91,7 +91,7 @@ bool archives::hold_memory(bool hold) {
   hui_heap_capacity(&size, nullptr, nullptr);
   hui_heap_stats(&live, &peak, &blocks, &failures);
   const bool room = !size || live + 64 * MiB + 16 * MiB <= size;
-  async_log::write("[PS5-REACT] extraction memory: heap=%zu/%zuMiB img decoded=%zuKiB room=%d", live >> 20, size >> 20,
+  async_log::write("[ROA] extraction memory: heap=%zu/%zuMiB img decoded=%zuKiB room=%d", live >> 20, size >> 20,
                    images::memory().decoded >> 10, room);
   return room;
 }
@@ -119,9 +119,9 @@ void log_memory() {
   hui_heap_stats(&live, &peak, &blocks, &failures);
   hui_heap_capacity(&size, nullptr, nullptr);
   const images::Memory image = images::memory();
-  async_log::write("[PS5-REACT] memory: heap=%zu/%zuMiB peak=%zuMiB failed=%zu img encoded=%zuKiB decoded=%zuKiB",
+  async_log::write("[ROA] memory: heap=%zu/%zuMiB peak=%zuMiB failed=%zu img encoded=%zuKiB decoded=%zuKiB",
                    live >> 20, size >> 20, peak >> 20, failures, image.encoded >> 10, image.decoded >> 10);
-  async_log::write("[PS5-REACT] images: %s", images::stats().c_str());
+  async_log::write("[ROA] images: %s", images::stats().c_str());
 }
 
 // A frozen screen on a tester's console says where the render loop hangs: past three seconds without
@@ -145,7 +145,7 @@ void* watch_loop(void*) {
     usleep(500'000);
     const std::int64_t now = hui::sys::monotonic_us(), last = loop_beat.load(std::memory_order_relaxed);
     if (stalled_at && last != stalled_at) {
-      async_log::write("[PS5-REACT] stall: loop turned again after %lldms", static_cast<long long>((last-stalled_at)/1000));
+      async_log::write("[ROA] stall: loop turned again after %lldms", static_cast<long long>((last-stalled_at)/1000));
       stalled_at = 0;
     }
     if (now - last < 3'000'000) continue;
@@ -153,7 +153,7 @@ void* watch_loop(void*) {
     if (now < next_report) continue;
     const char* call = host::current_call.load();
     const std::uint64_t seen = js_ticks;
-    async_log::write("[PS5-REACT] stall: loop stuck %llds phase=%s call=%s js_ticks=+%llu",
+    async_log::write("[ROA] stall: loop stuck %llds phase=%s call=%s js_ticks=+%llu",
                      static_cast<long long>((now-last)/1000000), loop_phase.load(std::memory_order_relaxed),
                      call ? call : "none", static_cast<unsigned long long>(seen-ticks));
     ticks = seen; next_report = now + 5'000'000;
@@ -178,18 +178,18 @@ std::string dev_path(const char* name) {
   return host::resolve_path((std::string("/app0/dev/") + name).c_str(), path, sizeof path) ? path : "";
 }
 
-constexpr std::int64_t duration_us = static_cast<std::int64_t>(PS5_REACT_TIMEOUT) * 1000000;
+constexpr std::int64_t duration_us = static_cast<std::int64_t>(ROA_TIMEOUT) * 1000000;
 
 void react_log(const char* line) { async_log::write("[REACT] %s", line); }
 
 // The smallest layout at least as tall as the console's output, else the largest. An unreadable
 // output picks the smallest.
-const Ps5ReactLayout& choose_layout() {
-  if (ps5_react_layout_count == 1) return ps5_react_layouts[0];
+const RoaLayout& choose_layout() {
+  if (roa_layout_count == 1) return roa_layouts[0];
   const int lines = video_output::output_lines();
-  for (unsigned i = 0; i < ps5_react_layout_count; ++i)
-    if (ps5_react_layouts[i].height >= lines) return ps5_react_layouts[i];
-  return ps5_react_layouts[ps5_react_layout_count - 1];
+  for (unsigned i = 0; i < roa_layout_count; ++i)
+    if (roa_layouts[i].height >= lines) return roa_layouts[i];
+  return roa_layouts[roa_layout_count - 1];
 }
 
 // An app folder may carry dev/input-script.txt (InputScript syntax) for unattended profiling; it is
@@ -201,8 +201,8 @@ void load_input_script(InputScript& script) {
   text[std::fread(text, 1, sizeof text - 1, file)] = '\0';
   std::fclose(file);
   char error[160];
-  if (script.parse(text, error, sizeof error)) async_log::write("[PS5-REACT] input script loaded");
-  else async_log::write("[PS5-REACT] input script ignored: %s", error);
+  if (script.parse(text, error, sizeof error)) async_log::write("[ROA] input script loaded");
+  else async_log::write("[ROA] input script ignored: %s", error);
 }
 
 // Live commands for a running title: a test machine overwrites dev/commands.txt with lines
@@ -224,7 +224,7 @@ public:
     read(true);
     if (pending_.empty() || !script.done()) return;
     char error[160];
-    if (!script.parse(pending_.c_str(), error, sizeof error)) async_log::write("[PS5-REACT] command ignored: %s", error);
+    if (!script.parse(pending_.c_str(), error, sizeof error)) async_log::write("[ROA] command ignored: %s", error);
     pending_.clear();
   }
 
@@ -242,7 +242,7 @@ private:
       steps += std::strspn(steps, " \t");
       last_sequence_ = sequence;
       if (!queue) continue;
-      async_log::write("[PS5-REACT] command: %s", steps);
+      async_log::write("[ROA] command: %s", steps);
       pending_ += steps;
       pending_ += ' ';
     }
@@ -313,7 +313,7 @@ bool call_input(const char* name, int argc, JSValue* argv) {
   if (!ok) {
     JSValue error = JS_GetException(ctx);
     const char* message = JS_ToCString(ctx, error);
-    async_log::write("[PS5-REACT] input exception: %s", message ? message : "unknown");
+    async_log::write("[ROA] input exception: %s", message ? message : "unknown");
     if (message) JS_FreeCString(ctx, message);
     JS_FreeValue(ctx, error);
   }
@@ -326,27 +326,27 @@ bool call_input(const char* name, int argc, JSValue* argv) {
 
 bool dispatch(const char* action) {
   JSValue value = JS_NewString(er_runtime_context(), action);
-  return call_input("__ps5ReactDispatch", 1, &value);
+  return call_input("__roaDispatch", 1, &value);
 }
 
 // The touchpad's finger at (x, y) 0..1, or lifted.
 bool touch(bool down, float x, float y) {
   JSContext* ctx = er_runtime_context();
   JSValue args[2] = {down ? JS_NewFloat64(ctx, x) : JS_NULL, down ? JS_NewFloat64(ctx, y) : JS_NULL};
-  return call_input("__ps5ReactTouch", 2, args);
+  return call_input("__roaTouch", 2, args);
 }
 
 // Display.setRefreshRate: the rate can change only while EGL is terminated (ps5_opengl_display_modes.h),
 // so the presenter's GL objects go with the context and are made again. The engine framebuffer is CPU
 // memory and survives; the presenter's first draw uploads all of it.
-bool switch_refresh_rate(hui::ps5::Display& display, GlPresenter& presenter, const Ps5ReactLayout& layout, int hz) {
+bool switch_refresh_rate(hui::ps5::Display& display, GlPresenter& presenter, const RoaLayout& layout, int hz) {
   const std::int64_t start = hui::sys::monotonic_us();
   presenter.release();
   display.close();
   if (!eglSetDisplayRefreshPS5(eglGetDisplay(EGL_DEFAULT_DISPLAY), hz))
-    async_log::write("[PS5-REACT] refresh %d Hz refused: 0x%x", hz, eglGetError());
+    async_log::write("[ROA] refresh %d Hz refused: 0x%x", hz, eglGetError());
   const bool ok = display.open(layout.surface_width, layout.surface_height) && presenter.init(layout.width, layout.height);
-  async_log::write("[PS5-REACT] refresh switch to %d Hz ok=%d in %lldms", hz, ok,
+  async_log::write("[ROA] refresh switch to %d Hz ok=%d in %lldms", hz, ok,
                    static_cast<long long>((hui::sys::monotonic_us() - start) / 1000));
   return ok;
 }
@@ -365,15 +365,15 @@ bool run_proof() {
   unsigned summaries = 0;
   bool runtime = false, software = false;
   // Accepted only before Display::open initializes EGL. A display without 120 Hz stays at 60.
-  if (PS5_REACT_REFRESH_RATE != 60 && !eglSetDisplayRefreshPS5(eglGetDisplay(EGL_DEFAULT_DISPLAY), PS5_REACT_REFRESH_RATE))
-    async_log::write("[PS5-REACT] refresh %d Hz refused: 0x%x", PS5_REACT_REFRESH_RATE, eglGetError());
-  const Ps5ReactLayout& layout = choose_layout();
+  if (ROA_REFRESH_RATE != 60 && !eglSetDisplayRefreshPS5(eglGetDisplay(EGL_DEFAULT_DISPLAY), ROA_REFRESH_RATE))
+    async_log::write("[ROA] refresh %d Hz refused: 0x%x", ROA_REFRESH_RATE, eglGetError());
+  const RoaLayout& layout = choose_layout();
   const int width = layout.width, height = layout.height;
   bool ok = display.open(layout.surface_width, layout.surface_height);
-  async_log::write("[PS5-REACT] display=%d at %lldms", ok, since_launch_ms());
+  async_log::write("[ROA] display=%d at %lldms", ok, since_launch_ms());
   if (ok) {
     ok = presenter.init(width, height);
-    async_log::write("[PS5-REACT] presenter=%d", ok);
+    async_log::write("[ROA] presenter=%d", ok);
   }
   if (ok) {
     software = er_software_backend_init(width, height);
@@ -400,9 +400,9 @@ bool run_proof() {
         presenter.video().dump_upscale_at(dev_path("upscale"), std::uint64_t(std::atoi(text)));
       std::fclose(file);
     }
-    async_log::write("[PS5-REACT] video upload=%s",
+    async_log::write("[ROA] video upload=%s",
                      presenter.video().upload_mode() == GlVideo::Upload::storage ? "storage" : "textures");
-    async_log::write("[PS5-REACT] software framebuffer=%d %dx%d", ok, width, height);
+    async_log::write("[ROA] software framebuffer=%d %dx%d", ok, width, height);
   }
   if (ok) {
     // A test deploy may pick the count with dev/render-workers.txt (1 renders single-core).
@@ -426,17 +426,17 @@ bool run_proof() {
     gpu.set_sync(gpu_flag == 2);
     GpuRenderer::set_log([](const char* line) { async_log::write("%s", line); });
     if (gpu_drawing && !gpu.start(width, height, GpuRenderer::Mode::draw)) {
-      async_log::write("[PS5-REACT] gpu renderer could not start: drawing in software");
+      async_log::write("[ROA] gpu renderer could not start: drawing in software");
       gpu.stop();
       gpu_drawing = false;
     }
-    async_log::write("[PS5-REACT] render workers=%d of %d, cpus=%d, %s", render_workers::start(gpu_drawing ? 1 : wanted),
+    async_log::write("[ROA] render workers=%d of %d, cpus=%d, %s", render_workers::start(gpu_drawing ? 1 : wanted),
                      render_workers::max_workers(), cpus, gpu_drawing ? "gpu" : "software");
   }
   // The pad opens before the bundle runs: it also initializes the user service
   // that the users, notification and browser calls need.
   if (ok) {
-    async_log::write("[PS5-REACT] pad=%d at %lldms", pad.open(), since_launch_ms());
+    async_log::write("[ROA] pad=%d at %lldms", pad.open(), since_launch_ms());
     host_platform_set_pad(&pad);
   }
   if (ok) {
@@ -448,8 +448,8 @@ bool run_proof() {
       hui_heap_capacity(&heap.size, nullptr, nullptr);
       return heap;
     });
-    if (network::start()) ps5_react_start_images();
-    async_log::write("[PS5-REACT] sound=%d at %lldms", ps5_react_start_sound(), since_launch_ms());
+    if (network::start()) roa_start_images();
+    async_log::write("[ROA] sound=%d at %lldms", roa_start_sound(), since_launch_ms());
     ErRuntimeConfig config = {};
     config.screen_width = width; config.screen_height = height;
     config.screen_scale = 2;
@@ -457,33 +457,33 @@ bool run_proof() {
     config.max_stack_size = 1024 * 1024;
     config.memory_limit = kJsMemoryLimit;
     config.malloc_functions = js_heap_functions();
-    config.install_host_globals = ps5_react_install_host_api;
+    config.install_host_globals = roa_install_host_api;
     runtime = er_runtime_init(&config);
     ok = runtime;
-    async_log::write("[PS5-REACT] runtime=%d at %lldms", ok, since_launch_ms());
+    async_log::write("[ROA] runtime=%d at %lldms", ok, since_launch_ms());
     // A test deploy samples JavaScript with dev/profile.txt holding the interval in microseconds.
     if (FILE* file = ok ? std::fopen(dev_path("profile.txt").c_str(), "rb") : nullptr) {
       char text[16] = {};
       const int interval = std::fgets(text, sizeof text, file) ? std::atoi(text) : 0;
       std::fclose(file);
       profiler.start(JS_GetRuntime(er_runtime_context()), interval > 0 ? interval : 1000);
-      async_log::write("[PS5-REACT] profiling JavaScript every %d us", interval > 0 ? interval : 1000);
+      async_log::write("[ROA] profiling JavaScript every %d us", interval > 0 ? interval : 1000);
     }
   }
   if (ok) {
     layout.register_assets();
     char fonts[256];
     if (host::resolve_path("/app0/fonts", fonts, sizeof fonts))
-      text_shaper::install(fonts, [](const char* line) { async_log::write("[PS5-REACT] %s", line); });
+      text_shaper::install(fonts, [](const char* line) { async_log::write("[ROA] %s", line); });
     ok = er_runtime_load_source(layout.bundle, layout.bundle_length, "app.jsx.bundle");
-    async_log::write("[PS5-REACT] bundle=%d gc_accounting=%d at %lldms", ok, er_runtime_gc_accounting_ok(), since_launch_ms());
+    async_log::write("[ROA] bundle=%d gc_accounting=%d at %lldms", ok, er_runtime_gc_accounting_ok(), since_launch_ms());
   }
   if (ok) {
     // Input failure is logged; timeout still allows the display-only proof to end.
-    async_log::write("[PS5-REACT] timeout=%ds after first frame", PS5_REACT_TIMEOUT);
+    async_log::write("[ROA] timeout=%ds after first frame", ROA_TIMEOUT);
     std::int64_t first_present = 0, previous = hui::sys::monotonic_us(), last_vblank_us = previous;
     // Replaced by the accepted mode after the first frame at a rate: a display without 120 Hz stays at 60.
-    int refresh_hz = PS5_REACT_REFRESH_RATE;
+    int refresh_hz = ROA_REFRESH_RATE;
     bool mode_known = false;
     double tick_carry_ms = 0;
     std::uint64_t frames = 0;
@@ -524,7 +524,7 @@ bool run_proof() {
       beat("input");
       if (now <= 0 || (duration_us > 0 && first_present && now - first_present >= duration_us)) break;
       if (const char* line = stats.start_frame(now)) {
-        async_log::write("[PS5-REACT] %s", line);
+        async_log::write("[ROA] %s", line);
         // Every fifth summary, about ten seconds apart.
         if (++summaries % 5 == 1) log_memory();
         if (const std::string videos = video_layers::summary(); !videos.empty()) {
@@ -540,14 +540,14 @@ bool run_proof() {
           const double cores = wall_before && wall_us > wall_before ? double(cpu_us - cpu_before) / (wall_us - wall_before) : 0;
           cpu_before = cpu_us;
           wall_before = wall_us;
-          async_log::write("[PS5-REACT] video upload %.1f MiB in %.1f ms, process cpu %.2f cores", bytes / 1048576.0,
+          async_log::write("[ROA] video upload %.1f MiB in %.1f ms, process cpu %.2f cores", bytes / 1048576.0,
                            us / 1000.0, cores);
           if (const std::string upscale = presenter.video().take_upscale_log(); !upscale.empty())
-            async_log::write("[PS5-REACT] video upscale %s", upscale.c_str());
+            async_log::write("[ROA] video upscale %s", upscale.c_str());
           std::size_t start = 0;
           while (start < videos.size()) {
             const std::size_t end = videos.find('\n', start);
-            async_log::write("[PS5-REACT] %s", videos.substr(start, end - start).c_str());
+            async_log::write("[ROA] %s", videos.substr(start, end - start).c_str());
             if (end == std::string::npos) break;
             start = end + 1;
           }
@@ -570,16 +570,16 @@ bool run_proof() {
       touched = touch_down;
       commands.poll(now, script);
       if (const char* action = ok ? script.next(static_cast<std::uint64_t>(now / 1000)) : nullptr) {
-        async_log::write("[PS5-REACT] script: %s", action);
+        async_log::write("[ROA] script: %s", action);
         if (!std::strcmp(action, "quit")) break;
         if (VirtualPad::is_step(action)) {
           char error[160];
           if (!virtual_pad.apply(action, static_cast<std::uint64_t>(now / 1000), error, sizeof error))
-            async_log::write("[PS5-REACT] script: %s", error);
+            async_log::write("[ROA] script: %s", error);
         } else if (!std::strncmp(action, "shot:", 5)) {
           const std::string path = dev_path((std::string(action + 5) + ".bmp").c_str());
           const bool saved = gpu.drawing() ? gpu.save_screen(presenter, path) : save_screenshot(path.c_str());
-          async_log::write("[PS5-REACT] shot %s: %s", path.c_str(), saved ? "saved" : std::strerror(errno));
+          async_log::write("[ROA] shot %s: %s", path.c_str(), saved ? "saved" : std::strerror(errno));
         } else if (!std::strncmp(action, "touch:", 6)) {
           float x = 0, y = 0;
           ok = touch(std::sscanf(action + 6, "%f,%f", &x, &y) == 2, x, y);
@@ -593,7 +593,7 @@ bool run_proof() {
            pressed >>= 1, ++i) {
         if (const char* held = pressed & 1 ? VirtualPad::action(i) : nullptr) ok = dispatch(held);
       }
-      ps5_react_set_gamepad(state);
+      roa_set_gamepad(state);
       if (!ok) break;
       stats.lap(FrameStats::input, hui::sys::monotonic_us());
       er_perf_phase_begin(ER_PERF_PHASE_JS);
@@ -604,10 +604,10 @@ bool run_proof() {
       const std::int64_t vblank_us = 1000000 / refresh_hz;
       const std::int64_t vblanks = std::max<std::int64_t>(1, (now - previous + vblank_us / 2) / vblank_us);
       const double elapsed_ms = vblanks * 1000.0 / refresh_hz;
-      ok = ps5_react_frame(er_runtime_context(), elapsed_ms);
+      ok = roa_frame(er_runtime_context(), elapsed_ms);
       er_perf_phase_end(ER_PERF_PHASE_JS);
       if (!ok) {
-        async_log::write("[PS5-REACT] frame callback exception");
+        async_log::write("[ROA] frame callback exception");
         break;
       }
       er_set_raster_deferred(false);
@@ -653,11 +653,11 @@ bool run_proof() {
       beat("gc");
       if (const char* line = gc_scheduler.frame(JS_GetRuntime(er_runtime_context()), hui::sys::monotonic_us(),
                                                 repainted, static_cast<std::size_t>(width) * height))
-        async_log::write("[PS5-REACT] %s", line);
+        async_log::write("[ROA] %s", line);
       if (!first_present) {
         first_present = hui::sys::monotonic_us();
         hui::sys::hide_splash_screen();
-        async_log::write("[PS5-REACT] first frame presented at %lldms", since_launch_ms());
+        async_log::write("[ROA] first frame presented at %lldms", since_launch_ms());
       }
       beat("embedded");
       const bool first_at_mode = !mode_known;
@@ -666,10 +666,10 @@ bool run_proof() {
         mode_known = true;
         EGLint mode_width = 0, mode_height = 0, mode_hz = 0;
         if (eglGetDisplayModePS5(eglGetDisplay(EGL_DEFAULT_DISPLAY), &mode_width, &mode_height, &mode_hz)) {
-          async_log::write("[PS5-REACT] display mode %dx%d at %d Hz", mode_width, mode_height, mode_hz);
+          async_log::write("[ROA] display mode %dx%d at %d Hz", mode_width, mode_height, mode_hz);
           if (mode_hz > 0) refresh_hz = mode_hz;
         }
-        ps5_react_set_refresh_rate(refresh_hz);
+        roa_set_refresh_rate(refresh_hz);
       }
       // The engine clock takes whole milliseconds; carrying the remainder keeps 8.33 ms frames at speed.
       tick_carry_ms += std::min(elapsed_ms, 50.0);
@@ -680,11 +680,11 @@ bool run_proof() {
       // The first frame at a mode may wait out the TV's resync in its swap; that wait is not motion.
       if (first_at_mode) previous = hui::sys::monotonic_us();
       ++frames;
-      if (const char* line = stats.end_frame(slow_frame_us)) async_log::write("[PS5-REACT] %s", line);
-      if (ps5_react_exit_requested()) break;
-      if (const int hz = ps5_react_take_refresh_request(); hz && gpu.drawing()) {
+      if (const char* line = stats.end_frame(slow_frame_us)) async_log::write("[ROA] %s", line);
+      if (roa_exit_requested()) break;
+      if (const int hz = roa_take_refresh_request(); hz && gpu.drawing()) {
         // Reopening EGL would lose the GPU renderer's picture, and the engine repaints only what changes.
-        async_log::write("[PS5-REACT] refresh %d Hz: not while the GPU renderer draws; set it in app.json", hz);
+        async_log::write("[ROA] refresh %d Hz: not while the GPU renderer draws; set it in app.json", hz);
       } else if (hz) {
         ok = switch_refresh_rate(display, presenter, layout, hz);
         refresh_hz = hz;
@@ -693,18 +693,18 @@ bool run_proof() {
         previous = hui::sys::monotonic_us();
       }
     }
-    async_log::write("[PS5-REACT] loop ended ok=%d frames=%llu", ok, static_cast<unsigned long long>(frames));
+    async_log::write("[ROA] loop ended ok=%d frames=%llu", ok, static_cast<unsigned long long>(frames));
     watching = false;
     if (watcher_started) pthread_join(watcher, nullptr);
     if (profiler.running()) {
       profiler.stop();
       const bool saved = profiler.write(dev_path("profile.folded").c_str());
-      async_log::write("[PS5-REACT] profile: %llu samples, saved=%d", static_cast<unsigned long long>(profiler.samples()), saved);
+      async_log::write("[ROA] profile: %llu samples, saved=%d", static_cast<unsigned long long>(profiler.samples()), saved);
     }
   }
-  if (!ok && runtime) async_log::write("[PS5-REACT] error=%s", er_runtime_last_error());
+  if (!ok && runtime) async_log::write("[ROA] error=%s", er_runtime_last_error());
   video_layers::stop();
-  ps5_react_stop_images();
+  roa_stop_images();
   archives::stop();
   browser_capture::stop();
   lan::stop();
@@ -713,7 +713,7 @@ bool run_proof() {
   network::stop();
   if (runtime) er_runtime_shutdown();
   text_shaper::shutdown();
-  ps5_react_stop_sound();
+  roa_stop_sound();
   gpu.stop();
   render_workers::stop();
   if (software) er_software_backend_destroy();
@@ -726,27 +726,27 @@ bool run_proof() {
 
 void* render_thread(void*) {
   name_thread("render");
-  hui::sys::log("[PS5-REACT] render thread started, 8 MiB stack, at %lldms", since_launch_ms());
-  if (!async_log::start()) hui::sys::log("[PS5-REACT] log writer thread failed; logging synchronously");
+  hui::sys::log("[ROA] render thread started, 8 MiB stack, at %lldms", since_launch_ms());
+  if (!async_log::start()) hui::sys::log("[ROA] log writer thread failed; logging synchronously");
   const bool ok = run_proof();
   async_log::stop();
-  hui::sys::log("[PS5-REACT] cleanup complete, result=%d; requesting title closure", ok);
+  hui::sys::log("[ROA] cleanup complete, result=%d; requesting title closure", ok);
   hui::sys::quit();
   return nullptr;
 }
 } // namespace
 
 int main() {
-  hui::sys::log("[PS5-REACT] %s (%s)", PS5_REACT_NAME, PS5_REACT_TITLE);
+  hui::sys::log("[ROA] %s (%s)", ROA_NAME, ROA_TITLE);
   std::size_t heap = 0, flexible_before = 0, flexible_after = 0;
   hui_heap_capacity(&heap, &flexible_before, &flexible_after);
   if (heap)
-    hui::sys::log("[PS5-REACT] heap: %zu MiB (flexible memory free %zu MiB before it, %zu MiB after)",
+    hui::sys::log("[ROA] heap: %zu MiB (flexible memory free %zu MiB before it, %zu MiB after)",
                   heap >> 20, flexible_before >> 20, flexible_after >> 20);
   else
-    hui::sys::log("[PS5-REACT] heap: none, system malloc (flexible memory free %zu MiB)", flexible_before >> 20);
+    hui::sys::log("[ROA] heap: none, system malloc (flexible memory free %zu MiB)", flexible_before >> 20);
   launch_us = hui::sys::monotonic_us();
-#if PS5_REACT_VIDEO
+#if ROA_VIDEO
   video::preload_platform_decoder();
 #endif
   initialize_filesystem_access();
@@ -759,7 +759,7 @@ int main() {
     pthread_attr_destroy(&attributes);
   }
   if (result) {
-    hui::sys::log("[PS5-REACT] thread creation failed=%d", result);
+    hui::sys::log("[ROA] thread creation failed=%d", result);
     hui::sys::quit();
   }
   // Native titles must not return to CRT exit(); the render thread owns closure.

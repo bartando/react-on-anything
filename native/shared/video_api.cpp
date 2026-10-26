@@ -5,7 +5,7 @@
 #include "app_config.hpp"
 #include "video_api.hpp"
 
-#if PS5_REACT_VIDEO
+#if ROA_VIDEO
 #include "video_audio.hpp"
 #include "video_player.hpp"
 
@@ -126,7 +126,7 @@ JSValue open(JSContext* ctx, JSValueConst, int argc, JSValueConst* argv) {
   std::string source = url;
   JS_FreeCString(ctx, url);
   if (source.empty()) return JS_ThrowTypeError(ctx, "video.open: expected a URL or path");
-  if (!PS5_REACT_NETWORKING && source.find("://") != std::string::npos)
+  if (!ROA_NETWORKING && source.find("://") != std::string::npos)
     return JS_ThrowPlainError(ctx, "video.open %s: streaming needs \"networking\": true in app.json", source.c_str());
   // App paths (/app0, /download0, ...) map to real paths as the filesystem does; URLs pass through.
   if (source.find("://") == std::string::npos) {
@@ -331,7 +331,7 @@ JSValue add_subtitle(JSContext* ctx, JSValueConst, int argc, JSValueConst* argv)
     if (!host::resolve_path(source.c_str(), path, sizeof path))
       return JS_ThrowPlainError(ctx, "video.addSubtitle %s: not an app path or URL", source.c_str());
     source = path;
-  } else if (!PS5_REACT_NETWORKING) {
+  } else if (!ROA_NETWORKING) {
     return JS_ThrowPlainError(ctx, "video.addSubtitle %s: streaming needs \"networking\": true in app.json", source.c_str());
   }
   return JS_NewInt32(ctx, entry->player->add_subtitle_file(source, text(2), text(3)));
@@ -543,7 +543,7 @@ JSValue can_upscale(JSContext*, JSValueConst, int, JSValueConst*) {
   return upscalers::available() ? JS_TRUE : JS_FALSE;
 }
 
-JSValue ps5_react_video_api(JSContext* ctx) {
+JSValue roa_video_api(JSContext* ctx) {
   JSValue out = JS_NewObject(ctx);
   const struct { const char* name; JSCFunction* call; int length; } functions[] = {
     {"open", open, 2}, {"close", close, 1}, {"setPaused", set_paused, 2}, {"seek", seek, 2},
@@ -578,7 +578,7 @@ JSValue disabled(JSContext* ctx, JSValueConst, int, JSValueConst*) {
 JSValue none(JSContext* ctx, JSValueConst, int, JSValueConst*) { return JS_NewArray(ctx); }
 } // namespace
 
-JSValue ps5_react_video_api(JSContext* ctx) {
+JSValue roa_video_api(JSContext* ctx) {
   JSValue out = JS_NewObject(ctx);
   JS_SetPropertyStr(ctx, out, "open", JS_NewCFunction(ctx, disabled, "open", 2));
   JS_SetPropertyStr(ctx, out, "poll", JS_NewCFunction(ctx, none, "poll", 0));

@@ -8,7 +8,7 @@ for ordinary content. `onEndReached` adds items as focus approaches the end
 
 ```jsx
 import {useCallback, useState} from 'react';
-import {ScrollView, VirtualList, View, Text} from '@ps5-react/core';
+import {ScrollView, VirtualList, View, Text} from '@react-on-anything/core';
 
 function Library({games, open}) {
   const [count, setCount] = useState(40);
@@ -82,7 +82,7 @@ focuses the first focus node of the item, by position; it returns `false` before
    target is required too, so a held key never unmounts rows still on screen.
 2. **What is worth mounting** (`desired`): `required` plus `overscan` rows in
    the direction of travel and one behind.
-3. Each presented frame (`globalThis.__ps5ReactFrame`) does one step: each
+3. Each presented frame (`globalThis.__roaFrame`) does one step: each
    edge of the mounted range moves a row toward `desired`, and a row entering
    it starts with `maxItemsPerFrame` items; with the edges in place, the
    filling row nearest focus gets that many more. Rows fill as a prefix (left

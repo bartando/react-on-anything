@@ -2,7 +2,7 @@
 
 ## Project purpose
 
-PS5 React lets developers build standalone, fullscreen PS5 homebrew applications
+React on Anything lets developers build standalone, fullscreen PS5 homebrew applications
 with React/JSX and controller input. Preserve a short path from JSX editing to
 native macOS preview and a PS5 application-folder build.
 
@@ -70,11 +70,11 @@ other live-device operations require explicit task authorization.
 
 ## Native API contract
 
-`native/shared/host_api.hpp` defines `globalThis.__ps5ReactNative` (its header names the ABI version);
+`native/shared/host_api.hpp` defines `globalThis.__roaNative` (its header names the ABI version);
 `runtime/js/native.js` is its only consumer and `docs/NATIVE-API.md` its public
 reference. Change all three together, implement every function on both hosts,
 keep calls synchronous, cheap, and on the render thread, and throw errors that
-name the call and path. Apps use the `@ps5-react/core` modules, never the global.
+name the call and path. Apps use the `@react-on-anything/core` modules, never the global.
 Do not claim a call works on PS5 without evidence in `docs/HARDWARE.md`.
 
 ## Dependencies and licensing

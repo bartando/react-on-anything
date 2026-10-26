@@ -15,7 +15,7 @@ npm run build -- --app-dir ../my-projects/my-store
 
 Choose a unique title ID and a directory name that does not match an app in
 `apps/`. The scaffold creates `app.json`, an entry point, assets and theme/font
-configuration. External applications resolve React and `@ps5-react/core` through
+configuration. External applications resolve React and `@react-on-anything/core` through
 the framework bundler without installing a separate `node_modules`.
 
 Build output remains in the framework's `.build/<directory-name>/` and
@@ -26,7 +26,7 @@ Build output remains in the framework's `.build/<directory-name>/` and
 
 Add `jsconfig.json` to the external application's root. Adjust the paths below
 to match the location of your framework checkout. For a layout with
-`ps5-react/` and `my-projects/my-store/` alongside it:
+`react-on-anything/` and `my-projects/my-store/` alongside it:
 
 ```json
 {
@@ -34,13 +34,13 @@ to match the location of your framework checkout. For a layout with
     "jsx": "react-jsx",
     "baseUrl": ".",
     "paths": {
-      "@ps5-react/core": ["../../ps5-react/runtime/js/index.js"],
-      "embedded-react": ["../../ps5-react/.deps/embeddedReact/bridges/quickjs/js/src/embedded-react/index.d.ts"],
-      "react": ["../../ps5-react/node_modules/@types/react"],
-      "react/*": ["../../ps5-react/node_modules/@types/react/*"]
+      "@react-on-anything/core": ["../../react-on-anything/runtime/js/index.js"],
+      "embedded-react": ["../../react-on-anything/.deps/embeddedReact/bridges/quickjs/js/src/embedded-react/index.d.ts"],
+      "react": ["../../react-on-anything/node_modules/@types/react"],
+      "react/*": ["../../react-on-anything/node_modules/@types/react/*"]
     }
   },
-  "include": ["**/*.jsx", "**/*.js", "../../ps5-react/runtime/js/**/*.d.ts"]
+  "include": ["**/*.jsx", "**/*.js", "../../react-on-anything/runtime/js/**/*.d.ts"]
 }
 ```
 

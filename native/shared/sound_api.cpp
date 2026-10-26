@@ -89,12 +89,12 @@ void set_gain(float gain) {
 }
 } // namespace video_audio
 
-bool ps5_react_start_sound() {
+bool roa_start_sound() {
   // Apps without sounds open no audio device and start no audio thread, until a video plays.
-  if (!ps5_react_sound_count) return false;
-  sounds.reserve(ps5_react_sound_count);
-  for (std::uint32_t i = 0; i < ps5_react_sound_count; ++i) {
-    const BakedSound& baked = ps5_react_sounds[i];
+  if (!roa_sound_count) return false;
+  sounds.reserve(roa_sound_count);
+  for (std::uint32_t i = 0; i < roa_sound_count; ++i) {
+    const BakedSound& baked = roa_sounds[i];
     Sound& sound = sounds.emplace_back();
     sound.name = baked.name;
     sound.samples.resize(static_cast<std::size_t>(baked.frames) * 2);
@@ -110,13 +110,13 @@ bool ps5_react_start_sound() {
   return audio;
 }
 
-void ps5_react_stop_sound() {
+void roa_stop_sound() {
   if (audio) host::stop_audio();
   audio = false;
   sounds.clear();
 }
 
-JSValue ps5_react_sound_api(JSContext* ctx) {
+JSValue roa_sound_api(JSContext* ctx) {
   JSValue out = JS_NewObject(ctx);
   JS_SetPropertyStr(ctx, out, "play", JS_NewCFunction(ctx, play, "play", 3));
   JS_SetPropertyStr(ctx, out, "setVolume", JS_NewCFunction(ctx, set_volume, "setVolume", 1));

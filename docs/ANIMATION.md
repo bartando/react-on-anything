@@ -1,6 +1,6 @@
 # Animation
 
-PS5 React animates with a Motion-style API (`motion.View`, `AnimatePresence`)
+React on Anything animates with a Motion-style API (`motion.View`, `AnimatePresence`)
 built on Embedded React's `Animated`, whose animations run in the C engine with
 no per-frame JavaScript. Tailwind animation classes compile to the same props.
 
@@ -13,7 +13,7 @@ lists the rules; [Design guidelines](#design-guidelines) gives the motion tokens
 ## Quick start
 
 ```jsx
-import {AppRegistry, View, Text, FocusScope, motion, transitions} from '@ps5-react/core';
+import {AppRegistry, View, Text, FocusScope, motion, transitions} from '@react-on-anything/core';
 
 const items = ['Play', 'Store', 'Settings'];
 
@@ -43,7 +43,7 @@ The row fades and rises in once; each card lifts while it has focus (see
 [NAVIGATION.md](NAVIGATION.md)). No JavaScript runs while a value moves: the engine drives it, and React
 renders only when state changes.
 
-## Runtime API (`@ps5-react/core`)
+## Runtime API (`@react-on-anything/core`)
 
 Also re-exported unchanged from Embedded React: `Animated`, `useAnimatedValue`,
 `Easing`, `LayoutAnimation`, `Pressable`.
@@ -428,7 +428,7 @@ Both hosts always print a summary every two seconds (illustrative values, not
 a PS5 measurement):
 
 ```text
-[PS5-REACT] frame: fps=59.9 total avg=16.7ms p95=17.1 max=21.4 | input=0.1 update=3.2 present=1.9 (upload=0.8 draw=1.1 up=2100KB) swap=11.4 | cpu=0.6 cores (main=4.8 present=0.9 swap=0.2) | js=0.4 (dispatch=0.1 react=0.2 marshal=0.1) layout=0.1 raster=2.7 (prepass=0.1 render=1.6 blit=1.0) dirty=310kpx blit=820kpx
+[ROA] frame: fps=59.9 total avg=16.7ms p95=17.1 max=21.4 | input=0.1 update=3.2 present=1.9 (upload=0.8 draw=1.1 up=2100KB) swap=11.4 | cpu=0.6 cores (main=4.8 present=0.9 swap=0.2) | js=0.4 (dispatch=0.1 react=0.2 marshal=0.1) layout=0.1 raster=2.7 (prepass=0.1 render=1.6 blit=1.0) dirty=310kpx blit=820kpx
 ```
 
 On the PS5, the line goes to the kernel log (`sceKernelDebugOutText`), which
@@ -468,7 +468,7 @@ Frames longer than 33 ms also print one line each (at most eight per window),
 with the same split for that frame and the bounding box of its repaint:
 
 ```text
-[PS5-REACT] slow frame: 41.2ms | js=24.1 (dispatch=0.6 react=22.0 marshal=1.0) layout=0.2 raster=9.8 (prepass=0.1 render=6.4 blit=3.2 sweep=0.0) present=2.6 (upload=1.1 draw=1.5) other=4.5 | dirty=2356x1250@142,190 1849kpx blit=7013kpx
+[ROA] slow frame: 41.2ms | js=24.1 (dispatch=0.6 react=22.0 marshal=1.0) layout=0.2 raster=9.8 (prepass=0.1 render=6.4 blit=3.2 sweep=0.0) present=2.6 (upload=1.1 draw=1.5) other=4.5 | dirty=2356x1250@142,190 1849kpx blit=7013kpx
 ```
 
 `other` is host work outside those phases, including the vsync wait. A PS5
@@ -479,7 +479,7 @@ make animations run in slow motion.
 
 #### Reproducible profiling
 
-The preview replays a scripted input sequence when `PS5_REACT_INPUT_SCRIPT` is
+The preview replays a scripted input sequence when `ROA_INPUT_SCRIPT` is
 set, through the same dispatch path as the keyboard and controller. Steps are
 separated by commas or whitespace: an action (`up`, `down`, `left`, `right`, `confirm`, `back`,
 `l1`, `r1`, `l2`, `r2`, `triangle`, `square`, `options`) takes one frame, `action*N` repeats it at the held-key repeat interval
@@ -492,14 +492,14 @@ touchpad finger `TRAVEL` (up to 0.5 of the pad) from its middle over 16 frames a
 sets a trigger's travel (0–1; past half it is pressed, 0 lets go). They return at once, so a
 hold reads `trigger:r2:1,wait:800,trigger:r2:0`; a button with an action (Cross: `confirm`,
 L2 past half travel: `l2`) dispatches it as it goes down, once. `ps5_drive.py script "<steps>"`
-runs steps in a running preview. `PS5_REACT_SLOW_FRAME_MS` changes the slow-frame threshold. Each
+runs steps in a running preview. `ROA_SLOW_FRAME_MS` changes the slow-frame threshold. Each
 action is echoed as a `script:` line, so the log reads as a timeline. Run the
 preview binary directly, with the bundle of the layout it was built for, to set them:
 
 ```sh
-PS5_REACT_SANDBOX=.build/my-app/sandbox PS5_REACT_SLOW_FRAME_MS=20 \
-PS5_REACT_INPUT_SCRIPT="wait:3000,right*3,wait:1500,confirm,wait:2000,back,wait:2000,quit" \
-  .build/my-app/desktop/ps5-react-preview .build/my-app/generated/3840x2160/app.bundle.js
+ROA_SANDBOX=.build/my-app/sandbox ROA_SLOW_FRAME_MS=20 \
+ROA_INPUT_SCRIPT="wait:3000,right*3,wait:1500,confirm,wait:2000,back,wait:2000,quit" \
+  .build/my-app/desktop/react-on-anything-preview .build/my-app/generated/3840x2160/app.bundle.js
 ```
 
 The variables have no effect on `--self-test`.
@@ -523,7 +523,7 @@ the current time in milliseconds, runs its steps once; each line is echoed as a
 
 When a slow frame's time is in `js` or `react`, a sampling profiler shows which
 functions it went to. Put the sampling interval in microseconds (`1000` is a good
-start) in `dev/profile.txt` of a PS5 test deploy, or set `PS5_REACT_PROFILE` to an
+start) in `dev/profile.txt` of a PS5 test deploy, or set `ROA_PROFILE` to an
 output path for the preview. About once per interval QuickJS's interrupt handler
 records the running stack, and when the run ends the host writes folded stacks
 to `dev/profile.folded` (or the given path): one line per stack, outermost frame

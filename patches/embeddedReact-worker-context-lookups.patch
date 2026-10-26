@@ -3,7 +3,7 @@ Embedded React: look up the calling worker's render context once per call.
 Modified from Embedded React (Apache-2.0, Copyright 2026 Cory Lamming) at the
 revision pinned in dependencies.lock.json, in the patch order listed there.
 Changed files: engine/core/native_renderer.c and engine/rendering/transform.c.
-Not proposed upstream: PS5 React maintains this change here.
+Not proposed upstream: React on Anything maintains this change here.
 
 With render workers installed, every lookup of a worker's buffers or blit
 context is a call through the host's worker_id hook, which the compiler cannot

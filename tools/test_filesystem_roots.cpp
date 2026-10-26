@@ -181,13 +181,13 @@ int main() {
 
   reset(false);
   initialize_filesystem_access();
-  expect_path("/download0/overdrive/downloads.json.tmp", "/data/ps5-react/PPSA99058/overdrive/downloads.json.tmp");
-  expect_path("/temp0/test", "/data/ps5-react/PPSA99058/tmp/test");
+  expect_path("/download0/overdrive/downloads.json.tmp", "/data/react-on-anything/PPSA99058/overdrive/downloads.json.tmp");
+  expect_path("/temp0/test", "/data/react-on-anything/PPSA99058/tmp/test");
   assert(console_filesystem_accessible());
   assert(fixture::files.empty() && fixture::handles.empty());
 
   reset(true);
-  fixture::files["/download0/.ps5-react-write-123-0"] = 'X';
+  fixture::files["/download0/.react-on-anything-write-123-0"] = 'X';
   assert(writable("/download0"));
   assert(fixture::files.size() == 1 && fixture::files.begin()->second == 'X');
 
@@ -200,7 +200,7 @@ int main() {
   status = elevation::Status::transport_error;
   initialize_filesystem_access();
   assert(!console_filesystem_accessible());
-  assert(!fixture::directories.contains("/data/ps5-react"));
+  assert(!fixture::directories.contains("/data/react-on-anything"));
   expect_path("/download0/file", "/download0/file");
 
   // Elevation moved the root, and another instance's sandbox holds _000: each root is the

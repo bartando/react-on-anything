@@ -5,7 +5,7 @@
 ```text
 apps/<app>/index.jsx                 application, state, components
             ↓
-runtime/js (@ps5-react/core)         focus navigation, controller API, native modules, primitives
+runtime/js (@react-on-anything/core)         focus navigation, controller API, native modules, primitives
             ↓ React reconciler / NativeUI / QuickJS
 Embedded React C                    tree, layout, text, rasterization
             ↓ opaque ARGB8888 framebuffer
@@ -16,8 +16,8 @@ native/desktop | native/ps5          window/EGL, input, clock, lifecycle,
 ```
 
 Applications do not access scePad, EGL, libkernel, or the SDK directly. They
-reach platform services only through the `@ps5-react/core` native modules
-(`runtime/js/native.js`), which wrap `globalThis.__ps5ReactNative`. Its shape is
+reach platform services only through the `@react-on-anything/core` native modules
+(`runtime/js/native.js`), which wrap `globalThis.__roaNative`. Its shape is
 fixed by `native/shared/host_api.hpp`: `native/shared/host_api.cpp` installs it
 and implements the filesystem with POSIX, while `native/ps5/` and
 `native/desktop/` implement the platform functions. Calls are synchronous on the
@@ -69,7 +69,7 @@ transform buffers are static, per worker, and outside the heap, which on the PS5
 takes the largest size that leaves 96 MiB of flexible memory free: keep them
 small enough that it stays at 256 MiB (`native/ps5/CMakeLists.txt`). Hosts log
 `render workers=N of 8, cpus=M`. To compare against single-core, set
-`PS5_REACT_RENDER_WORKERS=1` for the desktop preview, or put a count in
+`ROA_RENDER_WORKERS=1` for the desktop preview, or put a count in
 `dev/render-workers.txt` of a PS5 test deploy. `npm test` runs the self-test
 single-core and across the workers, and fails unless the snapshots are
 byte-identical and at least one commit forked.
@@ -77,7 +77,7 @@ byte-identical and at least one commit forked.
 The reconciler commits through the bridge after each React commit, during the
 host's input and JavaScript phase. Hosts bracket that phase with
 `er_set_raster_deferred`, so those commits run layout and `onLayout` but leave
-their damage to the commit after `ps5_react_frame`, which paints the frame once.
+their damage to the commit after `roa_frame`, which paints the frame once.
 A view that scales or rotates keeps its rendered source in one of
 `ERUI_XFORM_CACHE_SLOTS` shared slots (two on the PS5, 2.25 MiB each), reused
 while its subtree, images and size are unchanged.
@@ -104,7 +104,7 @@ literal style objects; class names and CSS never reach QuickJS or the engine.
 See [TAILWIND.md](TAILWIND.md).
 
 Hosts send directional actions (`up`, `down`, `left`, `right`, `confirm`,
-`back`) through `globalThis.__ps5ReactDispatch`, and call `globalThis.__ps5ReactFrame`
+`back`) through `globalThis.__roaDispatch`, and call `globalThis.__roaFrame`
 once per frame for per-frame motion. `runtime/js/focus/` moves focus
 between focusable elements from their laid-out rectangles, in JavaScript on the
 render thread; hosts know nothing about focus. See [NAVIGATION.md](NAVIGATION.md).
@@ -162,9 +162,9 @@ the application API; the PS5, the Switch and Android TV draw with the GPU. Its s
 (`er_canvas.h`): every drawing primitive, clip, offscreen group and transform is
 offered to an installed canvas before it is rasterized, and one that takes an op
 skips the software drawing; one that answers capture gets the op's pixels, drawn on
-the CPU into a buffer of their own. `PS5_REACT_CANVAS_TRACE=<file>` lists what the desktop
-preview draws per commit, run with `PS5_REACT_RENDER_WORKERS=1` for drawing order.
-`PS5_REACT_GPU_MIRROR=1` draws every commit again with OpenGL from those ops and compares
-the two screens at each `shot:`; `PS5_REACT_GPU=1` draws with OpenGL alone
+the CPU into a buffer of their own. `ROA_CANVAS_TRACE=<file>` lists what the desktop
+preview draws per commit, run with `ROA_RENDER_WORKERS=1` for drawing order.
+`ROA_GPU_MIRROR=1` draws every commit again with OpenGL from those ops and compares
+the two screens at each `shot:`; `ROA_GPU=1` draws with OpenGL alone
 (`native/shared/gpu_renderer.hpp`). No part depends on RNPS,
 Sony bundle signature bypasses, or changing the system home screen.

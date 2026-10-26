@@ -48,7 +48,7 @@ int main(int argc,char** argv){
  while(true){for(const auto& s:archives::poll())if(ended(s)){
   std::cout<<s.state<<"\n"<<s.written<<"\n"<<s.error;
   if(!again){archives::stop();return 0;}
-  std::cout<<"\n";setenv("PS5_REACT_RAR_WORKER",again,1);again=nullptr;cancel_after=-1;
+  std::cout<<"\n";setenv("ROA_RAR_WORKER",again,1);again=nullptr;cancel_after=-1;
   if(!(id=archives::enqueue(copy,error))){std::cout<<"failed\n"<<error;return 0;}
   started=std::chrono::steady_clock::now();}
  if(cancel_after>=0&&std::chrono::steady_clock::now()-started>=std::chrono::milliseconds(cancel_after)){archives::cancel(id);cancel_after=-1;}

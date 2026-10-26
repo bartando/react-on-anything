@@ -51,8 +51,8 @@ SPACED = ("hi", "bn", "ar", "ur")
 
 class TextClient:
     def __init__(self):
-        _, build = desktop(LAB, target="ps5-react-text-test")
-        self.process = subprocess.Popen([build / "ps5-react-text-test", ROOT / ".build/text-lab/generated/fonts"],
+        _, build = desktop(LAB, target="react-on-anything-text-test")
+        self.process = subprocess.Popen([build / "react-on-anything-text-test", ROOT / ".build/text-lab/generated/fonts"],
                                         stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, encoding="utf-8")
 
     def ask(self, *fields):

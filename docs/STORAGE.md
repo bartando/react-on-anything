@@ -109,7 +109,7 @@ before the render thread starts, prefers resident Lapy, otherwise sends the
 packaged helper to localhost ELF loader port 9021. The client proves write/read/
 remove access in `/data` before accepting success. Root aliases are remapped to
 accessible sandbox mounts after the process-root change; data can fall back to
-the title's own `/data/ps5-react/<TITLE_ID>` directory.
+the title's own `/data/react-on-anything/<TITLE_ID>` directory.
 
 The helper handles its target process's credentials and root references; the
 framework does not implement kernel offsets, credential writes, raw-pointer

@@ -6,7 +6,7 @@ one there. Changed files: engine/animation/animation.c,
 engine/scene/compositor.c, engine/scene/er_node_internal.h and
 engine/tests/rendering/CMakeLists.txt; new file
 engine/tests/rendering/test_translate_copy.c.
-Not proposed upstream: PS5 React maintains this change here.
+Not proposed upstream: React on Anything maintains this change here.
 
 A full-screen sheet sliding in by an animated translate repainted its whole box
 and what it uncovered on every frame: about 8 million pixels, 10 to 15 ms of

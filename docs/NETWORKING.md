@@ -1,6 +1,6 @@
 # HTTP and large downloads
 
-Import `Http` and `Downloads` from `@ps5-react/core`. Binary file bytes remain
+Import `Http` and `Downloads` from `@react-on-anything/core`. Binary file bytes remain
 in native memory; JavaScript receives progress and completion only.
 
 ## Enable PS5 networking
@@ -36,7 +36,7 @@ artifact still requires its own [hardware evidence](HARDWARE.md).
 ## Download a large file
 
 ```js
-import {Downloads, FileSystem} from '@ps5-react/core';
+import {Downloads, FileSystem} from '@react-on-anything/core';
 
 const task = Downloads.enqueue({
   url: 'https://example.com/archive.bin',
@@ -131,7 +131,7 @@ to make a retry succeed.
 ## Split-file manifests and format routing
 
 ```js
-import {DownloadFormats, Downloads, FileSystem} from '@ps5-react/core';
+import {DownloadFormats, Downloads, FileSystem} from '@react-on-anything/core';
 
 const artifact = DownloadFormats.artifact({format: 'ffpfsc', filename: 'game.ffpfsc'}, '/data');
 FileSystem.mkdir(artifact.directory, {recursive: true});
@@ -201,7 +201,7 @@ ranges plus bytes written in current ranges, not bytes already checkpointed.
 ## Bounded HTTP requests
 
 ```js
-import {Http} from '@ps5-react/core';
+import {Http} from '@react-on-anything/core';
 
 const response = await Http.request('https://example.com/catalog.json', {
   method: 'GET',

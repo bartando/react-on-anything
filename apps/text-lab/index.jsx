@@ -4,7 +4,7 @@
 // One sample per script the framework renders (docs/TEXT.md): wrapping, truncation and mixed runs.
 // The right column wraps Overdrive's downloads notes as its 280 px text-sm boxes do at 1.5× (the
 // layouts tools/test_text.py checks): lines break at spaces, CJK between characters.
-import {AppRegistry, View, Text} from '@ps5-react/core';
+import {AppRegistry, View, Text} from '@react-on-anything/core';
 import Inter from '../starter/assets/Inter-Regular.ttf';
 
 const SAMPLES = [

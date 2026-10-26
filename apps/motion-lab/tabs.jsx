@@ -1,7 +1,7 @@
 // Copyright (C) 2026 half144 and PS5 React contributors
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Additional attribution term: see LICENSE-ATTRIBUTION.
-import {View, Text, FocusScope, motion, transitions} from '@ps5-react/core';
+import {View, Text, FocusScope, motion, transitions} from '@react-on-anything/core';
 
 // Tabs share one fixed width (w-36) so the pill can glide by pure translation.
 const STEP = 144 + 8;

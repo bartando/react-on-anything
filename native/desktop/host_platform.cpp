@@ -36,7 +36,7 @@ void sysctl_string(const char* name, char* out, std::size_t size) {
 // "pt_BR.UTF-8" → "pt-BR"; the C and POSIX locales name no language.
 void environment_language(char* out, std::size_t size) {
   const char* value = nullptr;
-  for (const char* name : {"PS5_REACT_LANGUAGE", "LC_ALL", "LC_MESSAGES", "LANG"})
+  for (const char* name : {"ROA_LANGUAGE", "LC_ALL", "LC_MESSAGES", "LANG"})
     if ((value = std::getenv(name)) && *value) break;
   if (!value || !*value || !std::strcmp(value, "C") || !std::strncmp(value, "C.", 2) || !std::strcmp(value, "POSIX")) return;
   std::size_t length = std::strcspn(value, ".@");
@@ -110,7 +110,7 @@ bool resolve_path(const char* path, char* out, std::size_t size) {
   if (path[0] != '/' || std::strstr(path, "/../")) return false;
   const std::size_t length = std::strlen(path);
   if (length >= 3 && !std::strcmp(path + length - 3, "/..")) return false;
-  const char* root = std::getenv("PS5_REACT_SANDBOX");
+  const char* root = std::getenv("ROA_SANDBOX");
   if (!root || !*root) root = "./sandbox";
   const int written = std::snprintf(out, size, "%s%s", root, length == 1 ? "" : path);
   return written >= 0 && static_cast<std::size_t>(written) < size;

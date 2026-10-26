@@ -4,7 +4,7 @@
 # The Android TV host: a NativeActivity drawing with the GPU renderer through OpenGL ES 3.2. Built with
 # the NDK's toolchain by tools/android.py, which packages libmain.so into an APK.
 cmake_minimum_required(VERSION 3.16)
-project(ps5-react-android C CXX)
+project(react-on-anything-android C CXX)
 if(NOT FFMPEG_PREFIX)
   message(FATAL_ERROR "FFMPEG_PREFIX must name FFmpeg built for this ABI (tools/ffmpeg.py)")
 endif()
@@ -42,7 +42,7 @@ target_compile_options(main PRIVATE -Wall -Wextra -Werror)
 target_include_directories(main PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${SHARED} "${APP_GENERATED}" "${STB_IMAGE_DIR}" "${HUI_ROOT}/src"
   "${ER_ROOT}/engine/text" "${FFMPEG_PREFIX}/include" "${ANDROID_DEPS}/include")
 # Downloads past 2 GiB need 64-bit file offsets on 32-bit ARM too.
-target_compile_definitions(main PRIVATE _FILE_OFFSET_BITS=64 PS5_REACT_WIDTH=${APP_LAYOUT_WIDTH} PS5_REACT_HEIGHT=${APP_LAYOUT_HEIGHT})
+target_compile_definitions(main PRIVATE _FILE_OFFSET_BITS=64 ROA_WIDTH=${APP_LAYOUT_WIDTH} ROA_HEIGHT=${APP_LAYOUT_HEIGHT})
 # NativeActivity finds ANativeActivity_onCreate in the glue, which nothing else references.
 target_link_options(main PRIVATE "-u" "ANativeActivity_onCreate")
 target_link_libraries(main PRIVATE android_native_app_glue er-bridge-quickjs er-software harfbuzz sheenbidi

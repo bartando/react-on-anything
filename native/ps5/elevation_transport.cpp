@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Additional attribution term: see LICENSE-ATTRIBUTION.
 #include "app_config.hpp"
-#if PS5_REACT_CONSOLE_FILESYSTEM
+#if ROA_CONSOLE_FILESYSTEM
 #include "platform/ps5/system.hpp"
 #include <cstddef>
 #include <cstdint>
@@ -19,7 +19,7 @@ int __real_sceNetRecv(int, void*, std::size_t, int);
 namespace {
 void report(const char* operation, int result, int detail = 0) {
   const int* error = result < 0 ? sceNetErrnoLoc() : nullptr;
-  hui::sys::log("[PS5-REACT] helper %s result=%d detail=0x%x net_error=0x%08x",
+  hui::sys::log("[ROA] helper %s result=%d detail=0x%x net_error=0x%08x",
                 operation, result, detail, error ? static_cast<unsigned>(*error) : 0);
 }
 }

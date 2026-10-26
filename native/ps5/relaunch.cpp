@@ -12,7 +12,7 @@
 // It answers "ready" once it has the request, which is the proof the app needs before it closes.
 bool host::arrange_relaunch(char* error, std::size_t size) {
   std::string reason;
-  const int socket = payload_loader::send("relauncher.elf", std::string("RLA1\n") + PS5_REACT_TITLE + "\n", 3'000'000, "relaunch", reason);
+  const int socket = payload_loader::send("relauncher.elf", std::string("RLA1\n") + ROA_TITLE + "\n", 3'000'000, "relaunch", reason);
   if (socket >= 0) {
     char answer[16] = {};
     const int count = payload_loader::receive(socket, answer, sizeof answer - 1);

@@ -6,7 +6,7 @@ one there. Changed files: engine/core/er_limits.h,
 engine/rendering/image_scaler.c, engine/rendering/gradient.c and
 engine/tests/rendering/CMakeLists.txt; new file
 engine/tests/rendering/test_wide_rows.c.
-Not proposed upstream: PS5 React maintains this change here.
+Not proposed upstream: React on Anything maintains this change here.
 
 A scaled or tinted image and a linear or radial gradient assemble each row in
 a buffer of ERUI_MAX_IMG_ROW_PIXELS columns, and both clamped the box to it:

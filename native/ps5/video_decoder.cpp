@@ -229,7 +229,7 @@ void* ready_decoder(Slot& slot) {
     slot.created = sceVideodec2CreateDecoder(&slot.config, &slot.memory, &slot.decoder);
     if (slot.created == 0 && !slot.decoder) slot.created = -2;
     if (slot.created != 0) slot.decoder = nullptr;
-    async_log::write("[PS5-REACT] video: %s decoder created rc=0x%08x", slot.name, static_cast<unsigned>(slot.created));
+    async_log::write("[ROA] video: %s decoder created rc=0x%08x", slot.name, static_cast<unsigned>(slot.created));
   }
   return slot.decoder;
 }
@@ -277,7 +277,7 @@ int bring_up(Slot& slot, const char* name, std::uint32_t codec, std::uint32_t pr
   if (rc == 0) {
     slot.failed = "workspace (flexible)";
     slot.cpu_size = align16k(memory.cpu_size);
-    rc = sceKernelMapNamedFlexibleMemory(&slot.cpu, slot.cpu_size, 0x03, 0, "PS5ReactVideo");
+    rc = sceKernelMapNamedFlexibleMemory(&slot.cpu, slot.cpu_size, 0x03, 0, "RoaVideo");
     if (rc != 0) slot.cpu = nullptr;
   }
   if (rc == 0) slot.failed = "gpu (direct)", rc = slot.gpu.allocate(memory.gpu_size);
@@ -373,7 +373,7 @@ std::unique_ptr<video::Decoder> Videodec2::open(const AVCodecParameters* p, AVRa
   if (!supported || p->width < 16 || p->height < 16 || p->width > 3840 || p->height > 2176) return nullptr;
   Slot& slot = resident.slots[index];
   if (!resident.pool || !ready_decoder(slot)) {
-    async_log::write("[PS5-REACT] video: no %s hardware decoder (module 0x%08x); decoding with FFmpeg",
+    async_log::write("[ROA] video: no %s hardware decoder (module 0x%08x); decoding with FFmpeg",
                      avcodec_get_name(p->codec_id), static_cast<unsigned>(resident.module));
     return nullptr;
   }
@@ -385,7 +385,7 @@ std::unique_ptr<video::Decoder> Videodec2::open(const AVCodecParameters* p, AVRa
     if (!taken) std::this_thread::sleep_for(std::chrono::milliseconds(10));
   }
   if (!taken) {
-    async_log::write("[PS5-REACT] video: the %s decoder is busy with another video; decoding with FFmpeg", slot.name);
+    async_log::write("[ROA] video: the %s decoder is busy with another video; decoding with FFmpeg", slot.name);
     return nullptr;
   }
   auto decoder = std::unique_ptr<Videodec2>(new Videodec2());
@@ -405,7 +405,7 @@ std::unique_ptr<video::Decoder> Videodec2::open(const AVCodecParameters* p, AVRa
     ? static_cast<float>(av_q2d(p->sample_aspect_ratio)) : 1.0f;
   if (!decoder->build_filter()) return nullptr;
   decoder->restart();
-  async_log::write("[PS5-REACT] video: %s on sceVideodec2, %dx%d %d-bit profile %d", slot.name, p->width, p->height,
+  async_log::write("[ROA] video: %s on sceVideodec2, %dx%d %d-bit profile %d", slot.name, p->width, p->height,
                    depth, p->profile);
   return decoder;
 }
@@ -413,7 +413,7 @@ std::unique_ptr<video::Decoder> Videodec2::open(const AVCodecParameters* p, AVRa
 // Back to a clean stream: the resident decoder reset, the parameter sets sent again ahead of the next AU.
 void Videodec2::restart() {
   const int rc = sceVideodec2Reset(slot_->decoder);
-  if (rc != 0) async_log::write("[PS5-REACT] video: sceVideodec2Reset=0x%08x", static_cast<unsigned>(rc));
+  if (rc != 0) async_log::write("[ROA] video: sceVideodec2Reset=0x%08x", static_cast<unsigned>(rc));
   outputs_since_flush_ = errors_since_flush_ = 0;
   if (!annexb_header_.empty()) submit(annexb_header_.data(), annexb_header_.size(), kNoPts, false);
 }
@@ -493,7 +493,7 @@ bool Videodec2::submit(const std::uint8_t* au, std::size_t size, std::int64_t pt
   if (rc != 0) {
     pool_->busy[slot] = false;
     if (errors_since_flush_ == 0)
-      async_log::write("[PS5-REACT] video: sceVideodec2Decode=0x%08x (decode %llu, %zu bytes)", static_cast<unsigned>(rc),
+      async_log::write("[ROA] video: sceVideodec2Decode=0x%08x (decode %llu, %zu bytes)", static_cast<unsigned>(rc),
                        static_cast<unsigned long long>(decodes_), bytes);
     // Starting mid-stream, the first pictures may reference what was never decoded.
     return outputs_since_flush_ == 0 && ++errors_since_flush_ <= kErrorsAfterFlush;
@@ -631,7 +631,7 @@ void video::preload_platform_decoder() {
   sceKernelAvailableFlexibleMemorySize(&flexible);
   char line[256];
   if (resident.module != 0) {
-    std::snprintf(line, sizeof line, "[PS5-REACT] video: sceSysmoduleLoadModule(libSceVideodec2)=0x%08x",
+    std::snprintf(line, sizeof line, "[ROA] video: sceSysmoduleLoadModule(libSceVideodec2)=0x%08x",
                   static_cast<unsigned>(resident.module));
     hui::sys::log("%s", line);
     return;
@@ -658,7 +658,7 @@ void video::preload_platform_decoder() {
   sceKernelAvailableFlexibleMemorySize(&left);
   sceKernelAvailableDirectMemorySize(0, sceKernelGetDirectMemorySize(), 0x4000, &direct_at, &direct_left);
   sceKernelConfiguredFlexibleMemorySize(&configured);
-  hui::sys::log("[PS5-REACT] video: sceVideodec2 4K decoders prepared H.264=0x%08x%s HEVC=0x%08x%s VP9=0x%08x%s, frames "
+  hui::sys::log("[ROA] video: sceVideodec2 4K decoders prepared H.264=0x%08x%s HEVC=0x%08x%s VP9=0x%08x%s, frames "
                 "%dx%zuKiB (0x%08x), flexible memory %zu -> %zu of %zu MiB, direct memory %zu MiB free", static_cast<unsigned>(results[0]),
                 resident.slots[0].failed, static_cast<unsigned>(results[1]), resident.slots[1].failed,
                 static_cast<unsigned>(results[2]), resident.slots[2].failed, kFrameSlots, frame_size >> 10,

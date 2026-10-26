@@ -18,7 +18,7 @@ JSValue archives_unavailable(JSContext* ctx, JSValueConst, int, JSValueConst*) {
 }
 } // namespace
 
-JSValue ps5_react_archive_api(JSContext* ctx) {
+JSValue roa_archive_api(JSContext* ctx) {
   JSValue api = JS_NewObject(ctx);
   JS_SetPropertyStr(ctx, api, "extract", JS_NewCFunction(ctx, archives_unavailable, "extract", 3));
   JS_SetPropertyStr(ctx, api, "inspect", JS_NewCFunction(ctx, archives_unavailable, "inspect", 1));

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Additional attribution term: see LICENSE-ATTRIBUTION.
 import {useState} from 'react';
-import {AppRegistry, View, Text, FocusScope, useFocus} from '@ps5-react/core';
+import {AppRegistry, View, Text, FocusScope, useFocus} from '@react-on-anything/core';
 import {DevicePage} from './pages/device.jsx';
 import {FilesPage} from './pages/files.jsx';
 import {ControllerPage} from './pages/controller.jsx';
@@ -38,7 +38,7 @@ function Explorer() {
   return (
     <View className="w-screen h-screen bg-ink px-10 py-8 gap-6">
       <View className="gap-1">
-        <Text className="font-inter text-xs text-accent tracking-widest">PS5 REACT · NATIVE MODULES</Text>
+        <Text className="font-inter text-xs text-accent tracking-widest">REACT ON ANYTHING · NATIVE MODULES</Text>
         <Text className="font-inter text-xl text-white leading-none">System Explorer</Text>
       </View>
       <FocusScope focusKey="tabs" autoFocus wrap>

@@ -3,7 +3,7 @@
 // Additional attribution term: see LICENSE-ATTRIBUTION.
 // Interface sounds for every focus move, press and back. The WAVs are derived from Google's Material
 // Design sound resources (CC BY 4.0; see assets/sounds/NOTICE.txt).
-import {Sound, useNavigationEvents} from '@ps5-react/core';
+import {Sound, useNavigationEvents} from '@react-on-anything/core';
 import focus from './assets/sounds/focus.wav';
 import confirm from './assets/sounds/confirm.wav';
 import back from './assets/sounds/back.wav';

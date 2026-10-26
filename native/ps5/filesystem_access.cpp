@@ -14,7 +14,7 @@
 #include <sys/stat.h>
 #include <dirent.h>
 #include <unistd.h>
-#if PS5_REACT_CONSOLE_FILESYSTEM
+#if ROA_CONSOLE_FILESYSTEM
 #include "elevation.hpp"
 extern "C" {
 int sceNetInit(void);
@@ -33,15 +33,15 @@ char temp_root[256] = "/temp0";
 // its state, so a full cache there left the app nowhere to write.
 char cache_root[256] = "/download0/.cache";
 
-#if PS5_REACT_CONSOLE_FILESYSTEM
+#if ROA_CONSOLE_FILESYSTEM
 // Native titles must initialize libSceNet; linking its stub is not enough.
 // The resident/helper client owns its sockets; this scope owns only our pool
 // and library initialization, never a pool or initialization owned elsewhere.
 struct Network {
   int init = sceNetInit();
-  int pool = sceNetPoolCreate("ps5-react-filesystem", 0x10000, 0);
+  int pool = sceNetPoolCreate("react-on-anything-filesystem", 0x10000, 0);
   Network() {
-    hui::sys::log("[PS5-REACT] filesystem network init=0x%08x pool=%d",
+    hui::sys::log("[ROA] filesystem network init=0x%08x pool=%d",
                   static_cast<unsigned>(init), pool);
   }
   ~Network() {
@@ -63,7 +63,7 @@ bool writable(const char* root) {
   char path[512];
   int fd = -1;
   for (int attempt = 0; attempt < 8; ++attempt) {
-    if (std::snprintf(path, sizeof path, "%s/.ps5-react-write-%ld-%d", root,
+    if (std::snprintf(path, sizeof path, "%s/.react-on-anything-write-%ld-%d", root,
                       static_cast<long>(getpid()), attempt) >= static_cast<int>(sizeof path)) {
       errno = ENAMETOOLONG;
       return false;
@@ -110,7 +110,7 @@ void remove_legacy_image_cache() {
   }
   closedir(dir);
   rmdir(directory);
-  hui::sys::log("[PS5-REACT] removed %d cached images from %s", removed, directory);
+  hui::sys::log("[ROA] removed %d cached images from %s", removed, directory);
 }
 
 bool ensure_directory(const char* path) {
@@ -161,7 +161,7 @@ void sandbox_root(const char* name, const Before& before, char* out, std::size_t
     std::snprintf(out, size, "%s", held);
     return;
   }
-  if (before.fd >= 0) hui::sys::log("[PS5-REACT] %s root not found by its descriptor: '%s' errno=%d", name, held, errno);
+  if (before.fd >= 0) hui::sys::log("[ROA] %s root not found by its descriptor: '%s' errno=%d", name, held, errno);
   const bool app = !std::strcmp(name, "app0");
   char newest[256] = "";
   time_t newest_time = 0;
@@ -175,14 +175,14 @@ void sandbox_root(const char* name, const Before& before, char* out, std::size_t
       std::snprintf(newest, sizeof newest, "%s", candidate);
       newest_time = found.st_mtime;
     }
-    hui::sys::log("[PS5-REACT] %s root candidate rejected: %s%s", name, candidate, has_eboot ? " (holds eboot.bin)" : "");
+    hui::sys::log("[ROA] %s root candidate rejected: %s%s", name, candidate, has_eboot ? " (holds eboot.bin)" : "");
     return false;
   };
-  constexpr std::size_t prefix = sizeof PS5_REACT_TITLE - 1;
+  constexpr std::size_t prefix = sizeof ROA_TITLE - 1;
   if (DIR* dir = opendir("/mnt/sandbox")) {
     bool matched = false;
     while (dirent* item = readdir(dir)) {
-      if (std::strncmp(item->d_name, PS5_REACT_TITLE "_", prefix + 1)) continue;
+      if (std::strncmp(item->d_name, ROA_TITLE "_", prefix + 1)) continue;
       std::snprintf(path, sizeof path, "/mnt/sandbox/%s/%s", item->d_name, name);
       if ((matched = consider(path))) break;
     }
@@ -193,7 +193,7 @@ void sandbox_root(const char* name, const Before& before, char* out, std::size_t
     }
   }
   if (app)
-    for (const char* candidate : {"/system_ex/app/" PS5_REACT_TITLE, "/mnt/sandbox/pfsmnt/" PS5_REACT_TITLE "-app0"})
+    for (const char* candidate : {"/system_ex/app/" ROA_TITLE, "/mnt/sandbox/pfsmnt/" ROA_TITLE "-app0"})
       if (consider(candidate)) {
         std::snprintf(out, size, "%s", candidate);
         return;
@@ -202,16 +202,16 @@ void sandbox_root(const char* name, const Before& before, char* out, std::size_t
     std::snprintf(out, size, "%s", newest);
   } else {
     std::snprintf(path, sizeof path, "/%s", name);
-    if (!accessible(path)) std::snprintf(path, sizeof path, "/mnt/sandbox/%s_000/%s", PS5_REACT_TITLE, name);
+    if (!accessible(path)) std::snprintf(path, sizeof path, "/mnt/sandbox/%s_000/%s", ROA_TITLE, name);
     std::snprintf(out, size, "%s", path);
   }
-  hui::sys::log("[PS5-REACT] %s root unverified, using %s", name, out);
+  hui::sys::log("[ROA] %s root unverified, using %s", name, out);
 }
 #endif
 }
 
 void initialize_filesystem_access() {
-#if PS5_REACT_CONSOLE_FILESYSTEM
+#if ROA_CONSOLE_FILESYSTEM
   host_platform_prepare_filesystem_access();
   const char* names[] = {"app0", "download0", "temp0"};
   char* roots[] = {app_root, data_root, temp_root};
@@ -232,7 +232,7 @@ void initialize_filesystem_access() {
     if (network.pool < 0) return elevation::Status::transport_error;
     return elevation::request(elevation::Capability::filesystem);
   }();
-  hui::sys::log("[PS5-REACT] filesystem access status=%u path=%s",
+  hui::sys::log("[ROA] filesystem access status=%u path=%s",
                 static_cast<unsigned>(status), elevation::path());
   if (status == elevation::Status::ok)
     for (int i = 0; i < 3; ++i) sandbox_root(names[i], before[i], roots[i], sizeof app_root);
@@ -242,23 +242,23 @@ void initialize_filesystem_access() {
   console_access = true;
   remove_legacy_image_cache();
   if (!writable(data_root)) {
-    hui::sys::log("[PS5-REACT] data root not writable path=%s errno=%d; trying title data", data_root, errno);
-    std::snprintf(data_root, sizeof data_root, "/data/ps5-react/%s", PS5_REACT_TITLE);
-    if (!ensure_directory("/data/ps5-react") || !ensure_directory(data_root) || !writable(data_root))
-      hui::sys::log("[PS5-REACT] data root write proof failed path=%s errno=%d", data_root, errno);
+    hui::sys::log("[ROA] data root not writable path=%s errno=%d; trying title data", data_root, errno);
+    std::snprintf(data_root, sizeof data_root, "/data/react-on-anything/%s", ROA_TITLE);
+    if (!ensure_directory("/data/react-on-anything") || !ensure_directory(data_root) || !writable(data_root))
+      hui::sys::log("[ROA] data root write proof failed path=%s errno=%d", data_root, errno);
   }
   if (!writable(temp_root)) {
     std::snprintf(temp_root, sizeof temp_root, "%s/tmp", data_root);
     if (!ensure_directory(temp_root) || !writable(temp_root))
-      hui::sys::log("[PS5-REACT] temp root write proof failed path=%s errno=%d", temp_root, errno);
+      hui::sys::log("[ROA] temp root write proof failed path=%s errno=%d", temp_root, errno);
   }
   char title_data[256];
-  std::snprintf(title_data, sizeof title_data, "/data/ps5-react/%s", PS5_REACT_TITLE);
+  std::snprintf(title_data, sizeof title_data, "/data/react-on-anything/%s", ROA_TITLE);
   std::snprintf(cache_root, sizeof cache_root, "%s/cache", title_data);
-  if (!ensure_directory("/data/ps5-react") || !ensure_directory(title_data) || !ensure_directory(cache_root) || !writable(cache_root))
+  if (!ensure_directory("/data/react-on-anything") || !ensure_directory(title_data) || !ensure_directory(cache_root) || !writable(cache_root))
     std::snprintf(cache_root, sizeof cache_root, "%s/.cache", data_root);
   else crash_log::start(title_data);
-  hui::sys::log("[PS5-REACT] filesystem roots app=%s data=%s temp=%s cache=%s", app_root, data_root, temp_root, cache_root);
+  hui::sys::log("[ROA] filesystem roots app=%s data=%s temp=%s cache=%s", app_root, data_root, temp_root, cache_root);
 #endif
 }
 

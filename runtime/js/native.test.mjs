@@ -15,7 +15,7 @@ test('native network tasks deliver progress, release listeners and stop polling'
   const originalClear = globalThis.clearInterval;
   globalThis.setInterval = callback => { tick = callback; return 1; };
   globalThis.clearInterval = () => { clears++; };
-  globalThis.__ps5ReactNative = {network: {
+  globalThis.__roaNative = {network: {
     download: () => 1, request: () => 2,
     cancel: id => cancelled.push(id), poll: () => snapshots, version: () => 'fixture',
   }};
@@ -56,7 +56,7 @@ test('native network tasks deliver progress, release listeners and stop polling'
   } finally {
     globalThis.setInterval = originalInterval;
     globalThis.clearInterval = originalClear;
-    delete globalThis.__ps5ReactNative;
+    delete globalThis.__roaNative;
   }
 });
 
@@ -68,7 +68,7 @@ test('removeAsync resolves once the worker removed the path and rejects with the
   const originalClear = globalThis.clearInterval;
   globalThis.setInterval = callback => { tick = callback; return 1; };
   globalThis.clearInterval = () => {};
-  globalThis.__ps5ReactNative = {
+  globalThis.__roaNative = {
     fs: {removeAsync: path => {
       if (path.includes('..')) throw new Error(`fs.removeAsync ${path}: Path is not allowed`);
       return started.push(path);
@@ -89,7 +89,7 @@ test('removeAsync resolves once the worker removed the path and rejects with the
   } finally {
     globalThis.setInterval = originalInterval;
     globalThis.clearInterval = originalClear;
-    delete globalThis.__ps5ReactNative;
+    delete globalThis.__roaNative;
   }
 });
 
@@ -97,7 +97,7 @@ test('remote images poll only while loads are pending and release every referenc
   const released = [];
   let finished = [];
   let polls = 0;
-  globalThis.__ps5ReactNative = {image: {
+  globalThis.__roaNative = {image: {
     load: (uri, width, height) => (width === 10
       ? {id: 7, state: 'ready', name: '@image:7', width: 10, height: 10, error: ''}
       : {id: 8, state: 'loading', name: '', width: 0, height: 0, error: ''}),
@@ -106,22 +106,22 @@ test('remote images poll only while loads are pending and release every referenc
   }};
   const seen = [];
   const releaseReady = acquireImage('https://example.com/a.jpg', 10, 10, 0, false, result => seen.push(result.state));
-  globalThis.__ps5ReactFrame(16);
+  globalThis.__roaFrame(16);
   assert.equal(polls, 0, 'a cached image needs no polling');
   const releaseLoading = acquireImage('https://example.com/b.jpg', 20, 20, 0, false, result => seen.push(result.state));
-  globalThis.__ps5ReactFrame(16);
+  globalThis.__roaFrame(16);
   finished = [{id: 8, state: 'ready', name: '@image:8', width: 20, height: 20, error: ''}];
-  globalThis.__ps5ReactFrame(16);
-  globalThis.__ps5ReactFrame(16);
+  globalThis.__roaFrame(16);
+  globalThis.__roaFrame(16);
   assert.equal(polls, 2, 'polling stops once nothing is pending');
   assert.deepEqual(seen, ['ready', 'loading', 'ready']);
   releaseReady();
   releaseLoading();
   assert.deepEqual(released, [7, 8]);
-  globalThis.__ps5ReactFrame(16);
-  globalThis.__ps5ReactFrame(16);
+  globalThis.__roaFrame(16);
+  globalThis.__roaFrame(16);
   assert.equal(polls, 3, 'a release polls once more so eviction can run');
-  delete globalThis.__ps5ReactNative;
+  delete globalThis.__roaNative;
 });
 
 test('finished image loads are delivered in groups that grow while a render stays cheap', () => {
@@ -139,7 +139,7 @@ test('finished image loads are delivered in groups that grow while a render stay
     clock += group.includes(6) ? 10 : group.length ? 1.5 : 0;
   });
   let deliveredInto = null;
-  globalThis.__ps5ReactNative = {image: {
+  globalThis.__roaNative = {image: {
     load: () => ({id: nextId++, state: 'loading', name: '', width: 0, height: 0, error: ''}),
     release: () => {},
     poll: () => { polls++; const out = finished; finished = []; return out; },
@@ -159,7 +159,7 @@ test('finished image loads are delivered in groups that grow while a render stay
     const frames = [], closed = [];
     for (let frame = 0; frame < 5; frame++) {
       const before = groups.length;
-      globalThis.__ps5ReactFrame(16);
+      globalThis.__roaFrame(16);
       // The frame's own closing batch renders nothing here.
       frames.push(groups.slice(before).filter(group => group.length));
       closed.push(groups.at(-1).length === 0);
@@ -184,13 +184,13 @@ test('finished image loads are delivered in groups that grow while a render stay
   } finally {
     setFrameBatcher(run => run());
     performance.now = originalNow;
-    delete globalThis.__ps5ReactNative;
+    delete globalThis.__roaNative;
   }
 });
 
 test('Controller trigger effects map 0..1 onto the DualSense zones and steps', () => {
   const calls = [];
-  globalThis.__ps5ReactNative = {pad: {setTriggerEffect: (...args) => calls.push(args)}};
+  globalThis.__roaNative = {pad: {setTriggerEffect: (...args) => calls.push(args)}};
   try {
     Controller.setTriggerResistance('l2', 0.75, 0.5);
     Controller.setTriggerResistance('both', 0.01);
@@ -219,52 +219,52 @@ test('Controller trigger effects map 0..1 onto the DualSense zones and steps', (
     assert.throws(() => Controller.setTriggerEffect('l2', {type: 'vibration', amplitude: 1, frequency: 0}), /1\.\.255 Hz/);
     assert.throws(() => Controller.setTriggerEffect('l2', {type: 'resistance'}), /must be 0\.\.1/);
   } finally {
-    delete globalThis.__ps5ReactNative;
+    delete globalThis.__roaNative;
   }
 });
 
 test('Controller.subscribe reads the pad once a frame for every listener and stops with the last', () => {
   let reads = 0;
   let state = {connected: true, leftX: 0, leftY: 0, rightX: 0, rightY: 0, l2: 0, r2: 0, buttons: []};
-  globalThis.__ps5ReactNative = {pad: {state: () => { reads++; return state; }}};
+  globalThis.__roaNative = {pad: {state: () => { reads++; return state; }}};
   try {
     const a = [], b = [];
     const stopA = Controller.subscribe(event => a.push(event.type === 'trigger' ? `${event.trigger}=${event.value}` : `${event.type} ${event.button}`));
     const stopB = Controller.subscribe(event => b.push(event.type), {frames: true});
     reads = 0;
     state = {...state, r2: 0.7, buttons: ['r2', 'touchpad']};
-    globalThis.__ps5ReactFrame(16);
+    globalThis.__roaFrame(16);
     assert.equal(reads, 1, 'one read a frame, shared');
     assert.deepEqual(a, ['press r2', 'press touchpad', 'r2=0.7']);
     assert.deepEqual(b, ['press', 'press', 'trigger', 'frame']);
     stopA();
     stopA();
-    globalThis.__ps5ReactFrame(16);
+    globalThis.__roaFrame(16);
     assert.deepEqual(b.slice(4), ['frame']);
     stopB();
     reads = 0;
-    globalThis.__ps5ReactFrame(16);
+    globalThis.__roaFrame(16);
     assert.equal(reads, 0, 'no listener, no frame work');
   } finally {
-    delete globalThis.__ps5ReactNative;
+    delete globalThis.__roaNative;
   }
 });
 
 test('Power.keepAwake passes a boolean to the host', () => {
   const calls = [];
-  globalThis.__ps5ReactNative = {power: {keepAwake: enabled => calls.push(enabled)}};
+  globalThis.__roaNative = {power: {keepAwake: enabled => calls.push(enabled)}};
   try {
     Power.keepAwake(true);
     Power.keepAwake(0);
     assert.deepEqual(calls, [true, false]);
   } finally {
-    delete globalThis.__ps5ReactNative;
+    delete globalThis.__roaNative;
   }
 });
 
 test('Sound passes the name, volume and pan to the host and returns whether it started', () => {
   const calls = [];
-  globalThis.__ps5ReactNative = {sound: {
+  globalThis.__roaNative = {sound: {
     play: (name, volume, pan) => { calls.push(['play', name, volume, pan]); return name === 'tick'; },
     setVolume: volume => calls.push(['setVolume', volume]),
   }};
@@ -276,7 +276,7 @@ test('Sound passes the name, volume and pan to the host and returns whether it s
     assert.deepEqual(calls, [['play', 'tick', 1, 0], ['play', 'page', 1, -0.4], ['play', 'tick', 0.5, 0],
       ['setVolume', 0]]);
   } finally {
-    delete globalThis.__ps5ReactNative;
+    delete globalThis.__roaNative;
   }
 });
 
@@ -287,7 +287,7 @@ test('archive and download task IDs are isolated while sharing the polling timer
   const extractions = [];
   globalThis.setInterval = callback => { tick = callback; return 1; };
   globalThis.clearInterval = () => {};
-  globalThis.__ps5ReactNative = {
+  globalThis.__roaNative = {
     network: {download: () => 1, poll: () => networkSnapshots, cancel: id => cancelled.push(`network:${id}`)},
     archives: {extract: (...args) => { extractions.push(args); return 1; }, poll: () => archiveSnapshots, cancel: id => cancelled.push(`archives:${id}`)},
   };
@@ -309,7 +309,7 @@ test('archive and download task IDs are isolated while sharing the polling timer
     assert.equal((await download.done).written, 100);
   } finally {
     globalThis.setInterval = originalInterval; globalThis.clearInterval = originalClear;
-    delete globalThis.__ps5ReactNative;
+    delete globalThis.__roaNative;
   }
 });
 
@@ -320,7 +320,7 @@ test('browser capture delivers only its result and cancellation rejects as Abort
   const calls = [], cancelled = [];
   globalThis.setInterval = callback => { tick = callback; return 1; };
   globalThis.clearInterval = () => {};
-  globalThis.__ps5ReactNative = {browser: {
+  globalThis.__roaNative = {browser: {
     capture: (...args) => { calls.push(args); return next++; },
     poll: () => { const result = snapshots; snapshots = []; return result; },
     cancel: id => cancelled.push(id),
@@ -341,7 +341,7 @@ test('browser capture delivers only its result and cancellation rejects as Abort
     await assert.rejects(second.done, {name: 'AbortError'});
   } finally {
     globalThis.setInterval = originalInterval; globalThis.clearInterval = originalClear;
-    delete globalThis.__ps5ReactNative;
+    delete globalThis.__roaNative;
   }
 });
 
@@ -351,7 +351,7 @@ test('a LAN broadcast resolves with its replies, and an abort cancels it', async
   const calls = [], cancelled = [];
   globalThis.setInterval = callback => { tick = callback; return 1; };
   globalThis.clearInterval = () => {};
-  globalThis.__ps5ReactNative = {lan: {
+  globalThis.__roaNative = {lan: {
     broadcast: (...args) => { calls.push(args); return next++; },
     poll: () => { const result = snapshots; snapshots = []; return result; },
     cancel: id => cancelled.push(id),
@@ -374,6 +374,6 @@ test('a LAN broadcast resolves with its replies, and an abort cancels it', async
     assert.equal(listeners.size, 0);
   } finally {
     globalThis.setInterval = originalInterval; globalThis.clearInterval = originalClear;
-    delete globalThis.__ps5ReactNative;
+    delete globalThis.__roaNative;
   }
 });

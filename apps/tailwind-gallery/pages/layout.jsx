@@ -1,7 +1,7 @@
 // Copyright (C) 2026 half144 and PS5 React contributors
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Additional attribution term: see LICENSE-ATTRIBUTION.
-import {View, Text, tw} from '@ps5-react/core';
+import {View, Text, tw} from '@react-on-anything/core';
 import {Card, Page, code} from '../ui.jsx';
 
 const bar = 'h-3 rounded-full bg-emerald-400';

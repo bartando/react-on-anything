@@ -1,7 +1,7 @@
 // Copyright (C) 2026 half144 and PS5 React contributors
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Additional attribution term: see LICENSE-ATTRIBUTION.
-import {View, Text, tw} from '@ps5-react/core';
+import {View, Text, tw} from '@react-on-anything/core';
 
 // className consts cannot cross files, so shared text styles travel as compiled tw objects.
 export const caption = tw`font-inter text-xs text-slate-400 tracking-wider`;

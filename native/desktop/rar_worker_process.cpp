@@ -25,9 +25,9 @@ namespace {
 std::mutex guard;
 pid_t child = -1;
 
-// PS5_REACT_RAR_WORKER, or rar-extract beside this executable.
+// ROA_RAR_WORKER, or rar-extract beside this executable.
 std::string worker_path() {
-  if (const char* path = std::getenv("PS5_REACT_RAR_WORKER")) return path;
+  if (const char* path = std::getenv("ROA_RAR_WORKER")) return path;
   char self[PATH_MAX] = {};
 #ifdef __APPLE__
   std::uint32_t size = sizeof self;

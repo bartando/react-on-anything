@@ -28,7 +28,7 @@ std::atomic<const char*> host::current_call{nullptr};
 
 namespace {
 bool exit_requested = false;
-int refresh_rate = PS5_REACT_REFRESH_RATE, refresh_request = 0;
+int refresh_rate = ROA_REFRESH_RATE, refresh_request = 0;
 GamepadState gamepad;
 
 // A JS path argument and its platform path; frees the JS string on scope exit.
@@ -458,7 +458,7 @@ JSValue display_set_refresh_rate(JSContext* ctx, JSValueConst, int, JSValueConst
   if (JS_ToInt32(ctx, &hz, argv[0])) return JS_EXCEPTION;
   const int bit = hz == 60 ? 1 : hz == 120 ? 2 : 0;
   if (!bit) return JS_ThrowRangeError(ctx, "display.setRefreshRate: 60 or 120 Hz; got %d", hz);
-  if (!(PS5_REACT_REFRESH_RATES & bit))
+  if (!(ROA_REFRESH_RATES & bit))
     return JS_ThrowTypeError(ctx, "display.setRefreshRate: %d Hz is not in app.json \"refreshRates\"", hz);
   // Asking for the current rate cancels a switch that has not happened yet.
   refresh_request = hz == refresh_rate ? 0 : hz;
@@ -560,7 +560,7 @@ constexpr Function kText[] = {{"setLanguage", text_set_language, 1}};
 constexpr Function kRoot[] = {{"notify", notify, 2}, {"openURL", open_url, 1}, {"exit", request_exit, 1}};
 } // namespace
 
-void ps5_react_install_host_api(JSContext* ctx) {
+void roa_install_host_api(JSContext* ctx) {
   timespec now = {};
   clock_gettime(CLOCK_REALTIME, &now);
   er_runtime_set_wall_clock(static_cast<std::int64_t>(now.tv_sec) * 1000 + now.tv_nsec / 1000000);
@@ -575,39 +575,39 @@ void ps5_react_install_host_api(JSContext* ctx) {
   JS_SetPropertyStr(ctx, api, "power", namespace_object(ctx, "power", kPower));
   JS_SetPropertyStr(ctx, api, "display", namespace_object(ctx, "display", kDisplay));
   JS_SetPropertyStr(ctx, api, "text", namespace_object(ctx, "text", kText));
-  JS_SetPropertyStr(ctx, api, "network", ps5_react_network_api(ctx));
-  JS_SetPropertyStr(ctx, api, "archives", ps5_react_archive_api(ctx));
-  JS_SetPropertyStr(ctx, api, "packages", ps5_react_package_api(ctx));
-  JS_SetPropertyStr(ctx, api, "browser", ps5_react_browser_capture_api(ctx));
-  JS_SetPropertyStr(ctx, api, "lan", ps5_react_lan_api(ctx));
-  JS_SetPropertyStr(ctx, api, "video", ps5_react_video_api(ctx));
-  JS_SetPropertyStr(ctx, api, "image", ps5_react_image_api(ctx));
-  JS_SetPropertyStr(ctx, api, "sound", ps5_react_sound_api(ctx));
-  JS_SetPropertyStr(ctx, api, "audioOutput", ps5_react_audio_output_api(ctx));
+  JS_SetPropertyStr(ctx, api, "network", roa_network_api(ctx));
+  JS_SetPropertyStr(ctx, api, "archives", roa_archive_api(ctx));
+  JS_SetPropertyStr(ctx, api, "packages", roa_package_api(ctx));
+  JS_SetPropertyStr(ctx, api, "browser", roa_browser_capture_api(ctx));
+  JS_SetPropertyStr(ctx, api, "lan", roa_lan_api(ctx));
+  JS_SetPropertyStr(ctx, api, "video", roa_video_api(ctx));
+  JS_SetPropertyStr(ctx, api, "image", roa_image_api(ctx));
+  JS_SetPropertyStr(ctx, api, "sound", roa_sound_api(ctx));
+  JS_SetPropertyStr(ctx, api, "audioOutput", roa_audio_output_api(ctx));
   JSValue global = JS_GetGlobalObject(ctx);
-  JS_SetPropertyStr(ctx, global, "__ps5ReactNative", api);
+  JS_SetPropertyStr(ctx, global, "__roaNative", api);
   JS_FreeValue(ctx, global);
 }
 
-bool ps5_react_exit_requested() {
+bool roa_exit_requested() {
   return exit_requested;
 }
 
-void ps5_react_set_refresh_rate(int hz) {
+void roa_set_refresh_rate(int hz) {
   refresh_rate = hz;
 }
 
-int ps5_react_take_refresh_request() {
+int roa_take_refresh_request() {
   return std::exchange(refresh_request, 0);
 }
 
-void ps5_react_set_gamepad(const GamepadState& state) {
+void roa_set_gamepad(const GamepadState& state) {
   gamepad = state;
 }
 
-bool ps5_react_frame(JSContext* ctx, double elapsed_ms) {
+bool roa_frame(JSContext* ctx, double elapsed_ms) {
   JSValue global = JS_GetGlobalObject(ctx);
-  JSValue fn = JS_GetPropertyStr(ctx, global, "__ps5ReactFrame");
+  JSValue fn = JS_GetPropertyStr(ctx, global, "__roaFrame");
   bool ok = true;
   if (JS_IsFunction(ctx, fn)) {
     JSValue arg = JS_NewFloat64(ctx, elapsed_ms);

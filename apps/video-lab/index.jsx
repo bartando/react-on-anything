@@ -8,7 +8,7 @@
 // line, the upscaler one of UPSCALERS, the last the audio output) plays each file for that long, logs a summary
 // line per file and quits.
 import {useEffect, useMemo, useRef, useState} from 'react';
-import {AppRegistry, View, Text, FocusScope, FileSystem, Video, BackHandler, AudioOutput} from '@ps5-react/core';
+import {AppRegistry, View, Text, FocusScope, FileSystem, Video, BackHandler, AudioOutput} from '@react-on-anything/core';
 import {useInterfaceSounds} from './sounds.js';
 
 const MEDIA = '/app0/media';
