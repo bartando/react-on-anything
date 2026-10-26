@@ -10,7 +10,8 @@
 // frames. The bundles come from the NRO's RomFS (romfs:/<width>x<height>/app.bundle.js, romfs:/fonts/), so
 // one nxlink push deploys everything (tools/switch.py). The app's data lives on the SD card:
 //   sdmc:/switch/<app>/sandbox/{app0,download0,temp0}
-// and sdmc:/switch/<app>/options.env, KEY=VALUE lines set in the environment before boot, as on Android.
+// and sdmc:/switch/<app>/options.env, KEY=VALUE lines set in the environment before boot, as on Android; nxlink's
+// arguments after the NRO add to them for one run.
 // Launched by nxlink, stdout goes back to it.
 #include "host_platform.hpp"
 #include "network.hpp"
@@ -88,16 +89,20 @@ std::int64_t now_us() { return static_cast<std::int64_t>(armTicksToNs(armGetSyst
 std::uint64_t now_ms() { return static_cast<std::uint64_t>(now_us() / 1000); }
 std::uint32_t perf_clock() { return static_cast<std::uint32_t>(now_us()); }
 
+void set_option(const std::string& line) {
+  const std::size_t equals = line.find('=');
+  if (equals == std::string::npos) return;
+  setenv(line.substr(0, equals).c_str(), line.substr(equals + 1).c_str(), 1);
+  std::printf("[PS5-REACT] option %s\n", line.c_str());
+}
+
 // options.env: KEY=VALUE per line, # comments.
 void read_options(const std::string& path) {
   std::ifstream file(path);
   for (std::string line; std::getline(file, line);) {
     if (!line.empty() && line.back() == '\r') line.pop_back();
     if (line.empty() || line[0] == '#') continue;
-    const std::size_t equals = line.find('=');
-    if (equals == std::string::npos) continue;
-    setenv(line.substr(0, equals).c_str(), line.substr(equals + 1).c_str(), 1);
-    std::printf("[PS5-REACT] option %s\n", line.c_str());
+    set_option(line);
   }
 }
 
@@ -470,7 +475,7 @@ struct Host {
 };
 } // namespace
 
-int main(int, char**) {
+int main(int argc, char** argv) {
   // Larger socket buffers than the default, for streaming video and parallel image loads.
   SocketInitConfig sockets = *socketGetDefaultInitConfig();
   sockets.tcp_rx_buf_size = 0x40000;
@@ -486,6 +491,8 @@ int main(int, char**) {
     mkdir(dir.c_str(), 0755);
   switch_set_root(sandbox.c_str());
   read_options(data + "/options.env");
+  // nxlink's arguments after the NRO, KEY=VALUE each, on top of the file's.
+  for (int i = 1; i < argc; ++i) set_option(argv[i]);
   // PS5_REACT_LAYOUT=720 or 1080 picks one whatever the screen.
   const bool docked = appletGetOperationMode() == AppletOperationMode_Console;
   const char* forced = std::getenv("PS5_REACT_LAYOUT");

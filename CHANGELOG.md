@@ -2,6 +2,9 @@
 
 ## Unreleased — an Android TV host
 
+- On the Switch, nxlink's arguments after the NRO (`KEY=VALUE`) set options for one run, on top of
+  `options.env`.
+
 - `native/switch` runs an app on a Nintendo Switch with custom firmware, as a homebrew NRO drawing with
   the GPU renderer through Mesa's GLES 3.2, and `tools/switch.py` builds it and pushes it to the Homebrew
   Menu's netloader (docs/SWITCH.md). It lays the app out at 720p on the console and 1080p docked, raises
