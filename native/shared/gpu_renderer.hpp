@@ -84,6 +84,7 @@ private:
     // time the engine's commits spent handing ops over (record()).
     std::uint64_t submit_us = 0, finish_us = 0, max_finish_us = 0, record_us = 0;
     std::uint64_t batches = 0;  // the instanced calls the draws went out in
+    std::uint64_t hidden = 0;   // draws skipped as painted over (hidden_ops)
     std::uint64_t breaks[7] = {};  // why each ended (kBreakNames)
     std::uint64_t flush_us = 0, group_us = 0;  // in the calls, and in starting groups
     // Time spent in the driver creating and filling textures, by kind (images, glyphs, CPU-drawn pixels).
@@ -137,6 +138,8 @@ private:
   void note_upload(int kind, std::uint64_t us, std::uint64_t bytes);
   void copy_in(unsigned int texture, int w, int h, const void* pixels);
   void draw_ops();
+  // Which ops a later one hides: their draws are skipped (see hidden_ops()).
+  std::vector<bool> hidden_ops() const;
   struct Uniform { int location; int bytes; std::uint8_t value[64]; };
   std::vector<Uniform> uniforms_;
   std::unordered_map<std::uint64_t, std::size_t> uniform_index_; // program and name pointer → uniforms_

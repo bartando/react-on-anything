@@ -949,12 +949,12 @@ bool GpuRenderer::replay() {
   if (now_us - stats_.window_start_us >= 2000000) {
     const double n = static_cast<double>(stats_.replays);
     log_line("[ROA] gpu: replays=%llu avg=%.2fms max=%.2fms (submit %.2f%s) record=%.2fms | per replay: ops=%.0f "
-             "draws=%.0f in %.1f calls, regroups=%.1f pixels=%.1f (%.0fKB) uploads=%.1f",
+             "draws=%.0f in %.1f calls (%.0f hidden), regroups=%.1f pixels=%.1f (%.0fKB) uploads=%.1f",
              static_cast<unsigned long long>(stats_.replays), stats_.replay_us / n / 1000.0,
              stats_.max_replay_us / 1000.0, stats_.submit_us / n / 1000.0,
              sync_ ? (", finish " + std::to_string(stats_.finish_us / n / 1000.0).substr(0, 5) + " max " +
                       std::to_string(stats_.max_finish_us / 1000.0).substr(0, 5)).c_str() : "",
-             stats_.record_us / n / 1000.0, stats_.ops / n, stats_.draws / n, stats_.batches / n, stats_.regroups / n,
+             stats_.record_us / n / 1000.0, stats_.ops / n, stats_.draws / n, stats_.batches / n, stats_.hidden / n, stats_.regroups / n,
              stats_.pixel_ops / n, stats_.pixel_bytes / n / 1024.0, stats_.uploads / n);
     if (stats_.batches) {
       char line[256];
@@ -987,6 +987,79 @@ bool GpuRenderer::replay() {
   glUseProgram(0);
   glBindVertexArray(0);
   return drew;
+}
+
+// The draws a later op paints over entirely: a clear, or an opaque square fill at full alpha, covering
+// the clip it was drawn in. Every draw since that clip was pushed lies inside it, so on the Shield,
+// where a full-screen draw costs about a millisecond, the views' backgrounds under a host layer's hole
+// (seven of them on Home, erased by the hole's clear) no longer cost a frame. Not across what reaches
+// outside the clips (a clip reset, a scroll move) or groups, whose pixels later commits may reuse.
+std::vector<bool> GpuRenderer::hidden_ops() const {
+  const std::vector<Op>& ops = *ops_;
+  const auto draws_pixels = [](int kind) {
+    switch (kind) {
+      case ER_CANVAS_FILL: case ER_CANVAS_RRECT: case ER_CANVAS_RRECT_BORDERED: case ER_CANVAS_RRECT_RING:
+      case ER_CANVAS_RRECT_RING_EDGES: case ER_CANVAS_GRADIENT: case ER_CANVAS_BORDER_SWEEP: case ER_CANVAS_CLEAR:
+      case ER_CANVAS_IMAGE_REGION: case ER_CANVAS_GLYPH: case ER_CANVAS_PIXELS:
+        return true;
+      default:
+        return false;
+    }
+  };
+  std::vector<bool> hidden(ops.size(), false);
+  struct Level { int x0, y0, x1, y1; bool plain; std::size_t pushed; };
+  std::vector<Level> levels{{0, 0, width_, height_, true, 0}};  // [0]: the target
+  std::size_t barrier = 0;  // nothing before this is hidden: a group, reset or move came after it
+  int group_depth = 0, alpha = 255, blend = 0;
+  for (std::size_t i = 0; i < ops.size(); i++) {
+    const ERCanvasOp& op = ops[i].op;
+    if (op.depth) continue;
+    switch (op.kind) {
+      case ER_CANVAS_CLIP_RECT:
+      case ER_CANVAS_CLIP_RRECT: {
+        const Level& top = levels.back();
+        const bool rounded = op.kind == ER_CANVAS_CLIP_RRECT &&
+                             (op.radii[0] > 0 || op.radii[1] > 0 || op.radii[2] > 0 || op.radii[3] > 0);
+        levels.push_back({std::max(op.x, top.x0), std::max(op.y, top.y0), std::min(op.x + op.w, top.x1),
+                          std::min(op.y + op.h, top.y1), top.plain && !rounded, i});
+        continue;
+      }
+      case ER_CANVAS_CLIP_RESET:
+        levels.push_back({0, 0, width_, height_, false, i});
+        barrier = i + 1;
+        continue;
+      case ER_CANVAS_CLIP_POP:
+        if (levels.size() > 1) levels.pop_back();
+        continue;
+      case ER_CANVAS_ALPHA: alpha = op.alpha; continue;
+      case ER_CANVAS_BLEND: blend = op.mode; continue;
+      case ER_CANVAS_GROUP_BEGIN: group_depth++; barrier = i + 1; continue;
+      case ER_CANVAS_GROUP_END: group_depth--; barrier = i + 1; continue;
+      case ER_CANVAS_GROUP_DRAW: case ER_CANVAS_GROUP_XFORM: case ER_CANVAS_GROUP_KEEP: case ER_CANVAS_MOVE:
+        barrier = i + 1;
+        continue;
+      default:
+        break;
+    }
+    const bool square = op.radii[0] == 0 && op.radii[1] == 0 && op.radii[2] == 0 && op.radii[3] == 0;
+    const bool opaque = (op.argb >> 24) == 0xFF && alpha == 255 && blend != ER_BLEND_ADD &&
+                        (op.kind == ER_CANVAS_FILL || (square && op.kind == ER_CANVAS_RRECT) ||
+                         (square && op.kind == ER_CANVAS_RRECT_BORDERED &&
+                          (op.width <= 0 || (op.argb2 >> 24) == 0 || (op.argb2 >> 24) == 0xFF)));
+    if (group_depth || !levels.back().plain || !(op.kind == ER_CANVAS_CLEAR || opaque)) continue;
+    // What it covers: its rect inside the clips; the outermost clip it fills is what it hides.
+    const Level& top = levels.back();
+    const int x0 = std::max(op.x, top.x0), y0 = std::max(op.y, top.y0);
+    const int x1 = std::min(op.x + op.w, top.x1), y1 = std::min(op.y + op.h, top.y1);
+    for (std::size_t k = 0; k < levels.size(); k++) {
+      const Level& level = levels[k];
+      if (level.x0 < x0 || level.y0 < y0 || level.x1 > x1 || level.y1 > y1) continue;
+      for (std::size_t j = std::max(k ? level.pushed + 1 : 0, barrier); j < i; j++)
+        if (draws_pixels(ops[j].op.kind)) hidden[j] = true;
+      break;
+    }
+  }
+  return hidden;
 }
 
 void GpuRenderer::draw_ops() {
@@ -1145,6 +1218,10 @@ void GpuRenderer::draw_ops() {
   auto shape = [&](const ERCanvasOp& op, int mode, std::uint32_t fill, const int edges[4],
                    const std::uint32_t colors[4]) {
     if (op.w <= 0 || op.h <= 0) return;
+    // Nothing to see: a transparent fill with no edge showing (an empty view's background).
+    bool shows = mode != 2 && (fill >> 24) != 0;
+    for (int i = 0; mode != 0 && i < 4 && !shows; i++) shows = edges[i] > 0 && (colors[i] >> 24) != 0;
+    if (!shows) return;
     float* r = draw(mode, op.x, op.y, op.w, op.h, 0, alpha);
     if (!r) return;
     float radii[4];
@@ -1183,8 +1260,14 @@ void GpuRenderer::draw_ops() {
   };
 
   bind();
-  for (const Op& recorded : *ops_) {
+  const std::vector<bool> hidden = hidden_ops();
+  for (std::size_t index = 0; index < ops_->size(); index++) {
+    const Op& recorded = (*ops_)[index];
     const ERCanvasOp& op = recorded.op;
+    if (hidden[index]) {
+      stats_.hidden++;
+      continue;
+    }
     switch (op.kind) {
       case ER_CANVAS_FILL: {
         ERCanvasOp square = op;
