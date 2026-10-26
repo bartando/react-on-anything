@@ -29,7 +29,7 @@
   the GPU renderer through Mesa's GLES 3.2, and `tools/switch.py` builds it and pushes it to the Homebrew
   Menu's netloader (docs/SWITCH.md). It lays the app out at 720p on the console and 1080p docked, raises
   the CPU, GPU and memory clocks for its run, decodes video with NVDEC, and takes the controller and the
-  touchscreen. Anyfin's home screen holds 60 fps there.
+  touchscreen. A Jellyfin client's home screen holds 60 fps there.
 
 - A touchscreen is input protocol v6: `__ps5ReactScreenTouch(x, y)`, working as on a phone. A tap presses
   the element under the finger, a drag scrolls the ScrollView under it and flings it on when let go of
@@ -42,7 +42,7 @@
   stalls in a minute of browsing, and the desktop 550 ms in a short run; now 0.6 s and 80 ms.
 
 - `native/android` runs an app on Android TV through the GPU renderer and OpenGL ES 3.2, and
-  `tools/android.py` builds, installs and starts it (docs/ANDROID.md). Anyfin runs on an NVIDIA SHIELD
+  `tools/android.py` builds, installs and starts it (docs/ANDROID.md). A Jellyfin client runs on an NVIDIA SHIELD
   at 1080p and 55 to 59 fps on its home screen, on under one CPU core; most of each frame is the
   renderer issuing its draws.
 
@@ -71,8 +71,8 @@
 ## Unreleased — the desktop preview can draw with the GPU
 
 - `PS5_REACT_GPU=1` draws the preview with OpenGL instead of the software rasterizer: the engine skips
-  what the GPU renderer takes, and the presenter shows its texture, uploading nothing. On an Anyfin
-  tour, frames that repaint most of the screen run at 82 fps on 0.4 CPU cores, against 74 to 113 fps
+  what the GPU renderer takes, and the presenter shows its texture, uploading nothing. On a Jellyfin
+  client tour, frames that repaint most of the screen run at 82 fps on 0.4 CPU cores, against 74 to 113 fps
   on 2.7 cores with eight render workers and 29 to 46 fps with one (an M-series Mac at 4K).
 
 - The animated focus ring (a border sweep) has a shader of its own, and a captured op hands over
@@ -83,7 +83,7 @@
 - `PS5_REACT_GPU_MIRROR=1` makes the desktop preview draw each commit a second time with OpenGL,
   from the canvas ops, beside the software rasterizer. Each `shot:` compares the two as the screen
   shows them, over the presenter's layers (a page's backdrop), and writes both screens and their
-  difference next to the shot. On an Anyfin tour (home, a row, a title page) 0.1% of pixels differ by
+  difference next to the shot. On a Jellyfin client tour (home, a row, a title page) 0.1% of pixels differ by
   more than 2 levels, all at the antialiased edges of rounded rings.
 
 - A canvas can answer `ER_CANVAS_CAPTURE` to a shadow, border sweep, arc or vector: the engine draws
@@ -99,7 +99,7 @@
   same. It is the seam a GPU renderer will draw through.
 
 - `PS5_REACT_CANVAS_TRACE=<file>` makes the desktop preview list every primitive of each commit, and
-  any pixels that reached the screen outside one. A traced Anyfin tour (home, rows, a title page,
+  any pixels that reached the screen outside one. A traced Jellyfin client tour (home, rows, a title page,
   stills, a menu) found none.
 
 ## Unreleased — the CLI uses the project's .venv
