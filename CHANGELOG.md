@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased — React on Anything
+
+- PS5 React is React on Anything, since it runs on the PS5, the Switch, Android TV and macOS. Apps import
+  `@react-on-anything/core` instead of `@ps5-react/core`; the `PS5_REACT_*` settings are `ROA_*`; the
+  native globals are `__roa*` (`__roaNative`, `__roaFrame`, `__roaDispatch`, ...); the log tag is `[ROA]`.
+  A PS5 title's data under `/data/ps5-react/<TITLE_ID>` moves to `/data/react-on-anything/<TITLE_ID>`
+  at its first launch. The Android package is `dev.reactonanything.<app>`, a new app beside the old one,
+  and the bundled samples have new content IDs. The copyright lines and the attribution term keep the
+  original name.
+
 ## Unreleased — an Android TV host
 
 - `native/switch` runs an app on a Nintendo Switch with custom firmware, as a homebrew NRO drawing with

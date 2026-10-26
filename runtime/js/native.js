@@ -624,16 +624,6 @@ function pollImagesSoon() {
 }
 
 /**
- * Internal: the native reference behind one `<Image source={{uri}}>`. `listener` receives
- * `{state, name, width, height, error}` now and, while loading, once more when the load finishes;
- * the returned function releases the reference, cancelling the load when nothing else holds it.
- * @param {string} uri @param {number} width @param {number} height box in render pixels
- * @param {number} fit 0 cover, 1 contain, 2 stretch, 3 none
- * @param {boolean} prefetch loads after images that elements draw
- * @param {(result: {state: string, name: string, width: number, height: number, error: string, color: string | null}) => void} listener
- * @returns {() => void}
- */
-/**
  * Internal: replaces the list of URLs the host fetches into its disk cache in the background, while
  * no image load waits. @param {string[]} uris
  */
@@ -649,6 +639,16 @@ export function deferImageFetches(ms) {
   host().image.defer(ms);
 }
 
+/**
+ * Internal: the native reference behind one `<Image source={{uri}}>`. `listener` receives
+ * `{state, name, width, height, error}` now and, while loading, once more when the load finishes;
+ * the returned function releases the reference, cancelling the load when nothing else holds it.
+ * @param {string} uri @param {number} width @param {number} height box in render pixels
+ * @param {number} fit 0 cover, 1 contain, 2 stretch, 3 none
+ * @param {boolean} prefetch loads after images that elements draw
+ * @param {(result: {state: string, name: string, width: number, height: number, error: string, color: string | null}) => void} listener
+ * @returns {() => void}
+ */
 export function acquireImage(uri, width, height, fit, prefetch, listener) {
   const result = host().image.load(uri, width, height, fit, prefetch);
   const {id} = result;
@@ -683,6 +683,9 @@ function pollVideos() {
   for (const status of host().video.poll()) players.get(status.id)?.(status);
 }
 
+/** Whether this host's video presenter runs the upscaling networks (the PS5's GPU does; GLES hosts do not). */
+export const canUpscaleVideo = () => host().video.canUpscale?.() === true;
+
 /**
  * Internal: one native player behind a `<Video>`. `listener` receives the player's status every frame
  * while it is open. Returns the engine image name its `<Image layer>` draws and the controls.
@@ -691,9 +694,6 @@ function pollVideos() {
  *   audio?: boolean, headers?: Record<string, string>, audioOutput?: 'pcm' | 'auto' | 'passthrough'}} options
  * @param {(status: object) => void} listener
  */
-/** Whether this host's video presenter runs the upscaling networks (the PS5's GPU does; GLES hosts do not). */
-export const canUpscaleVideo = () => host().video.canUpscale?.() === true;
-
 export function openVideo(source, options, listener) {
   const video = host().video;
   const {id, name} = video.open(source, options);
