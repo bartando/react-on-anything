@@ -3,15 +3,13 @@
 // Additional attribution term: see LICENSE-ATTRIBUTION.
 #include "host_platform.hpp"
 #include "host_api.hpp"
+#include "host_posix.hpp"
 #include "audio_sink.hpp"
-#include "storage_stats.hpp"
 #include "audio/mixer.hpp"
 
 #include <aaudio/AAudio.h>
 #include <atomic>
-#include <dirent.h>
 #include <sys/resource.h>
-#include <sys/statvfs.h>
 #include <sys/sysinfo.h>
 #include <cerrno>
 #include <cstdio>
@@ -56,33 +54,10 @@ int list_mounts(MountEntry*, int) {
   return 0;
 }
 
-bool disk_usage(const char* real_path, double& total, double& free) {
-  struct statvfs fs;
-  if (statvfs(real_path, &fs) != 0) return false;
-  if (!storage::disk_bytes(fs.f_frsize, fs.f_blocks, static_cast<std::int64_t>(fs.f_bavail), total, free)) {
-    errno = EIO;
-    return false;
-  }
-  return true;
-}
-
 void trace(const char*) {}
 
-bool read_dir(const char* real_path, void (*visit)(const char* name, void* user), void* user) {
-  DIR* dir = opendir(real_path);
-  if (!dir) return false;
-  while (const dirent* item = readdir(dir))
-    if (std::strcmp(item->d_name, ".") && std::strcmp(item->d_name, "..")) visit(item->d_name, user);
-  closedir(dir);
-  return true;
-}
-
 bool resolve_path(const char* path, char* out, std::size_t size) {
-  if (path[0] != '/' || std::strstr(path, "/../")) return false;
-  const std::size_t length = std::strlen(path);
-  if (length >= 3 && !std::strcmp(path + length - 3, "/..")) return false;
-  const int written = std::snprintf(out, size, "%s%s", root.c_str(), length == 1 ? "" : path);
-  return written >= 0 && static_cast<std::size_t>(written) < size;
+  return resolve_under(root.c_str(), path, out, size);
 }
 
 void device_info(DeviceInfo& info) {

@@ -1,22 +1,23 @@
 // Copyright (C) 2026 half144 and PS5 React contributors
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Additional attribution term: see LICENSE-ATTRIBUTION.
-#include "browser_capture.hpp"
+#include "packages.hpp"
 #include <mutex>
 
-// The preview has no console to install into: each request fails on its first poll, as a refused one would.
-namespace browser_capture {
+// For a host that is not a PS5 (the desktop preview, the Switch, Android): there is no console to install
+// into, so each request fails on its first poll, as a refused one would.
+namespace packages {
 namespace {
 std::mutex guard;
 std::vector<Snapshot> pending;
 std::uint32_t next_id = 1;
 }
-std::uint32_t capture(std::string, std::string, int, std::string&) {
+std::uint32_t install(std::string, std::string, std::string&) {
   std::lock_guard lock(guard);
   Snapshot snapshot;
   snapshot.id = next_id++;
   snapshot.state = "failed";
-  snapshot.error = "Browser capture requires a PS5 with an ELF loader on port 9021.";
+  snapshot.error = "Installing a PKG requires a PS5.";
   pending.push_back(snapshot);
   return snapshot.id;
 }

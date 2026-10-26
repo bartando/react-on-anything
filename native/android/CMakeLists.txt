@@ -22,20 +22,14 @@ target_compile_options(sheenbidi PRIVATE -w)
 target_include_directories(sheenbidi PUBLIC "${SB_ROOT}/Headers" PRIVATE "${SB_ROOT}/Source")
 # Same engine options as the PS5 and the desktop preview.
 add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../ps5" runtime)
+include("${CMAKE_CURRENT_SOURCE_DIR}/../shared/core_sources.cmake")
 add_library(android_native_app_glue STATIC "${ANDROID_NDK}/sources/android/native_app_glue/android_native_app_glue.c")
 target_include_directories(android_native_app_glue PUBLIC "${ANDROID_NDK}/sources/android/native_app_glue")
 
 set(SHARED ../shared)
-add_library(main SHARED host.cpp host_platform.cpp network_platform.cpp unavailable.cpp java.cpp media_codec.cpp gl_video.cpp image_decoder.cpp
-  ../desktop/package_installer.cpp ../desktop/browser_capture.cpp
-  ${SHARED}/network.cpp ${SHARED}/network_api.cpp
-  ${SHARED}/package_api.cpp ${SHARED}/browser_capture_api.cpp ${SHARED}/lan.cpp ${SHARED}/lan_api.cpp
-  ${SHARED}/image_loader.cpp ${SHARED}/image_api.cpp ${SHARED}/sound_api.cpp ${SHARED}/audio_sink.cpp
-  ${SHARED}/audio_output_api.cpp ${SHARED}/host_api.cpp ${SHARED}/removals.cpp "${HUI_ROOT}/src/audio/mixer.cpp"
-  ${SHARED}/host_core.cpp ${SHARED}/gl_presenter.cpp ${SHARED}/frame_stats.cpp ${SHARED}/js_heap.cpp ${SHARED}/js_profiler.cpp
-  ${SHARED}/damage_tracker.cpp ${SHARED}/canvas_trace.cpp ${SHARED}/gpu_renderer.cpp ${SHARED}/render_workers.cpp
-  ${SHARED}/input_script.cpp ${SHARED}/screenshot.cpp ${SHARED}/text_shaper.cpp ${SHARED}/video_api.cpp ${SHARED}/video_player.cpp ${SHARED}/annex_b.cpp
-  ${SHARED}/video_subtitles.cpp
+add_library(main SHARED ${ROA_CORE_SOURCES} host.cpp host_platform.cpp network_platform.cpp java.cpp media_codec.cpp gl_video.cpp image_decoder.cpp
+  ${SHARED}/archives_unsupported.cpp ${SHARED}/packages_unsupported.cpp ${SHARED}/browser_capture_unsupported.cpp ${SHARED}/host_posix.cpp
+  ${SHARED}/video_player.cpp ${SHARED}/video_subtitles.cpp ${SHARED}/annex_b.cpp "${HUI_ROOT}/src/audio/mixer.cpp"
   "${APP_LAYOUT}/assets.generated.c" "${APP_LAYOUT}/sounds.generated.c")
 target_compile_features(main PRIVATE cxx_std_20)
 target_compile_options(main PRIVATE -Wall -Wextra -Werror)

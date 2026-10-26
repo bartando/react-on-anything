@@ -19,18 +19,13 @@ target_include_directories(sheenbidi PUBLIC "${SB_ROOT}/Headers" PRIVATE "${SB_R
 set(CMAKE_DL_LIBS "")
 # Same engine options as the PS5 and the desktop preview.
 add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../ps5" runtime)
+include("${CMAKE_CURRENT_SOURCE_DIR}/../shared/core_sources.cmake")
 
 set(SHARED ../shared)
-add_executable(main host.cpp host_platform.cpp network_platform.cpp unavailable.cpp libc_shims.cpp video_decoder.cpp
-  ../desktop/package_installer.cpp ../desktop/browser_capture.cpp
-  ${SHARED}/network.cpp ${SHARED}/network_api.cpp
-  ${SHARED}/package_api.cpp ${SHARED}/browser_capture_api.cpp ${SHARED}/lan.cpp ${SHARED}/lan_api.cpp
-  ${SHARED}/image_loader.cpp ${SHARED}/image_api.cpp ${SHARED}/sound_api.cpp ${SHARED}/audio_sink.cpp
-  ${SHARED}/audio_output_api.cpp ${SHARED}/host_api.cpp ${SHARED}/removals.cpp "${HUI_ROOT}/src/audio/mixer.cpp"
-  ${SHARED}/host_core.cpp ${SHARED}/gl_presenter.cpp ${SHARED}/frame_stats.cpp ${SHARED}/js_heap.cpp ${SHARED}/js_profiler.cpp
-  ${SHARED}/damage_tracker.cpp ${SHARED}/canvas_trace.cpp ${SHARED}/gpu_renderer.cpp ${SHARED}/render_workers.cpp
-  ${SHARED}/input_script.cpp ${SHARED}/screenshot.cpp ${SHARED}/text_shaper.cpp ${SHARED}/video_api.cpp
+add_executable(main ${ROA_CORE_SOURCES} host.cpp host_platform.cpp network_platform.cpp libc_shims.cpp video_decoder.cpp
+  ${SHARED}/archives_unsupported.cpp ${SHARED}/packages_unsupported.cpp ${SHARED}/browser_capture_unsupported.cpp ${SHARED}/host_posix.cpp
   ${SHARED}/video_player.cpp ${SHARED}/video_subtitles.cpp ${SHARED}/gl_video.cpp ${SHARED}/gl_upscale.cpp
+  "${HUI_ROOT}/src/audio/mixer.cpp"
   "${APP_GENERATED}/1920x1080/sounds.generated.c")
 # Both layouts' baked images and fonts, each registered by its own er_register_assets_<width>x<height>: the
 # host picks the layout at launch, 720p handheld and 1080p docked.

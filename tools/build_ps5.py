@@ -32,6 +32,12 @@ RT_HASH = LOCK["runtimeShim"]["sha256"]
 BUILTINS_PACKAGE = LOCK["compilerRt"]["package"]
 BUILTINS_HASH = LOCK["compilerRt"]["sha256"]
 
+def core_sources():
+    """The native/shared sources every host builds (native/shared/core_sources.txt)."""
+    listing = (ROOT / "native/shared/core_sources.txt").read_text().splitlines()
+    return [ROOT / "native/shared" / name for name in listing if name and not name.startswith("#")]
+
+
 def main():
     global BUILD, TITLE
     parser = argparse.ArgumentParser()
@@ -144,16 +150,14 @@ def main():
     definitions = next(line.split("=", 1)[1] for line in
                        (cross / "bridge/engine/CMakeFiles/embedded-react.dir/flags.make").read_text().splitlines()
                        if line.startswith("C_DEFINES ="))
-    sources = [ROOT / "native/ps5/native_host.cpp", ROOT / "native/ps5/async_log.cpp", ROOT / "native/ps5/host_platform.cpp", ROOT / "native/ps5/video_output.cpp", ROOT / "native/ps5/time_compat.c", ROOT / "native/ps5/archive_compat.c",
+    sources = [ROOT / "native/ps5/native_host.cpp", *core_sources(), ROOT / "native/ps5/async_log.cpp", ROOT / "native/ps5/host_platform.cpp", ROOT / "native/ps5/video_output.cpp", ROOT / "native/ps5/time_compat.c", ROOT / "native/ps5/archive_compat.c",
                ROOT / "native/ps5/filesystem_access.cpp",
                ROOT / "native/ps5/elevation_transport.cpp",
-               ROOT / "native/shared/host_api.cpp", ROOT / "native/shared/removals.cpp", ROOT / "native/shared/network.cpp",
-               ROOT / "native/shared/network_api.cpp", ROOT / "native/shared/archives.cpp", ROOT / "native/shared/archive_preflight.cpp", ROOT / "native/shared/rar5_password.cpp", ROOT / "native/shared/archive_writer.cpp", ROOT / "native/shared/archive_api.cpp", ROOT / "native/shared/browser_capture_api.cpp", ROOT / "native/shared/lan.cpp", ROOT / "native/shared/lan_api.cpp", ROOT / "native/ps5/browser_capture.cpp", ROOT / "native/shared/package_api.cpp", ROOT / "native/ps5/package_installer.cpp", ROOT / "native/ps5/payload_loader.cpp", ROOT / "native/ps5/relaunch.cpp", ROOT / "native/ps5/crash_log.cpp", ROOT / "native/ps5/utf8_locale.cpp", ROOT / "native/ps5/network_platform.cpp",
-               ROOT / "native/shared/image_loader.cpp", ROOT / "native/shared/image_api.cpp",
-               ROOT / "native/shared/sound_api.cpp", layout_dirs[0] / "sounds.generated.c",
-               ROOT / "native/shared/audio_sink.cpp", ROOT / "native/shared/audio_output_api.cpp", ROOT / "native/ps5/bitstream_output.cpp",
-               ROOT / "native/shared/host_core.cpp", ROOT / "native/shared/canvas_trace.cpp", ROOT / "native/shared/gl_presenter.cpp", ROOT / "native/shared/gpu_renderer.cpp", ROOT / "native/shared/gl_video.cpp", ROOT / "native/shared/gl_upscale.cpp", ROOT / "native/shared/video_api.cpp",
-               ROOT / "native/shared/frame_stats.cpp", ROOT / "native/shared/js_heap.cpp", ROOT / "native/shared/js_profiler.cpp", ROOT / "native/shared/damage_tracker.cpp", ROOT / "native/shared/render_workers.cpp", ROOT / "native/shared/input_script.cpp", ROOT / "native/shared/screenshot.cpp", ROOT / "native/shared/text_shaper.cpp", *layout_assets,
+               ROOT / "native/shared/archives.cpp", ROOT / "native/shared/archive_preflight.cpp", ROOT / "native/shared/rar5_password.cpp", ROOT / "native/shared/archive_writer.cpp", ROOT / "native/shared/archive_api.cpp", ROOT / "native/ps5/browser_capture.cpp", ROOT / "native/ps5/package_installer.cpp", ROOT / "native/ps5/payload_loader.cpp", ROOT / "native/ps5/relaunch.cpp", ROOT / "native/ps5/crash_log.cpp", ROOT / "native/ps5/utf8_locale.cpp", ROOT / "native/ps5/network_platform.cpp",
+               layout_dirs[0] / "sounds.generated.c",
+               ROOT / "native/ps5/bitstream_output.cpp",
+               ROOT / "native/shared/gl_video.cpp", ROOT / "native/shared/gl_upscale.cpp",
+               *layout_assets,
                layouts_c, *[hui / ("src/platform/ps5/" + n + ".cpp") for n in ("display_egl", "pad", "system", "audio_out")],
                hui / "src/core/input.cpp", hui / "src/audio/mixer.cpp", hui / "src/runtime/app_heap.c", hui / "src/runtime/runtime_shims.c",
                native / "app_crt.cpp", native / "app_cpp_runtime.cpp"]
@@ -278,8 +282,8 @@ def main():
         image = Image.new("RGB", (512, 512), "#101820")
         draw = ImageDraw.Draw(image)
         font = ImageFont.truetype(str(er / "assets/fonts/Inter-Regular.ttf"), 64)
-        draw.text((48, 140), "PS5", font=font, fill="#45d4de")
-        draw.text((48, 225), "React", font=font, fill="white")
+        draw.text((48, 140), "React on", font=font, fill="#45d4de")
+        draw.text((48, 225), "Anything", font=font, fill="white")
         image.save(app / "sce_sys/icon0.png")
     shutil.rmtree(app / "fonts", ignore_errors=True)
     for relative, source in resource_files(app_dir, config).items():

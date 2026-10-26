@@ -1,0 +1,5 @@
+# ROA_CORE_SOURCES: the shared sources in core_sources.txt, as paths; CMake configures again when it changes.
+set(ROA_CORE_SOURCES_FILE "${CMAKE_CURRENT_LIST_DIR}/core_sources.txt")
+file(STRINGS "${ROA_CORE_SOURCES_FILE}" ROA_CORE_SOURCES REGEX "^[^#]")
+list(TRANSFORM ROA_CORE_SOURCES PREPEND "${CMAKE_CURRENT_LIST_DIR}/")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${ROA_CORE_SOURCES_FILE}")

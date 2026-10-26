@@ -5,6 +5,7 @@
 // libSce* calls. None of these calls has been verified on hardware yet.
 
 #include "host_api.hpp"
+#include "host_posix.hpp"
 #include "async_log.hpp"
 #include "host_platform.hpp"
 #include "storage_stats.hpp"
@@ -134,10 +135,7 @@ const char* platform_name() { return "ps5"; }
 // Preserve sandbox aliases, including after opt-in console access. Parent
 // traversal remains refused before platform path mapping.
 bool resolve_path(const char* path, char* out, std::size_t size) {
-  if (path[0] != '/') return false;
-  for (const char* part = path; part; part = std::strchr(part + 1, '/'))
-    if (part[1] == '.' && part[2] == '.' && (part[3] == '/' || part[3] == '\0')) return false;
-  return resolve_filesystem_path(path, out, size);
+  return valid_app_path(path) && resolve_filesystem_path(path, out, size);
 }
 
 void trace(const char* call) { async_log::write("[ROA] native %s", call); }

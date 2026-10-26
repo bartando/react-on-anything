@@ -1,7 +1,8 @@
 // Copyright (C) 2026 half144 and PS5 React contributors
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Additional attribution term: see LICENSE-ATTRIBUTION.
-// What the Switch host does not have yet: archive extraction. Its native API exists so an app loads.
+// For a host without archive extraction yet (the Switch, Android: no libarchive or xz build). Its native
+// API exists so an app loads; a request fails as a refused one would.
 #include "archives.hpp"
 #include "host_api.hpp"
 #include "image_loader.hpp"
@@ -22,7 +23,7 @@ namespace {
 JSValue nothing(JSContext*, JSValueConst, int, JSValueConst*) { return JS_UNDEFINED; }
 JSValue none(JSContext* ctx, JSValueConst, int, JSValueConst*) { return JS_NewArray(ctx); }
 JSValue archives_unavailable(JSContext* ctx, JSValueConst, int, JSValueConst*) {
-  return JS_ThrowInternalError(ctx, "archives: archives are not supported on the Switch yet");
+  return JS_ThrowInternalError(ctx, "archives: archives are not supported on %s yet", host::platform_name());
 }
 } // namespace
 

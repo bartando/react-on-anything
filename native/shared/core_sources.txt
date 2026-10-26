@@ -1,0 +1,29 @@
+# The native/shared sources every host builds: the CMake hosts through core_sources.cmake, the PS5
+# through tools/build_ps5.py. Sources only some hosts build stay in their own lists, as the video player,
+# which the PS5 builds only for an app with video.
+audio_output_api.cpp
+audio_sink.cpp
+browser_capture_api.cpp
+canvas_trace.cpp
+damage_tracker.cpp
+frame_stats.cpp
+gl_presenter.cpp
+gpu_renderer.cpp
+host_api.cpp
+host_core.cpp
+image_api.cpp
+image_loader.cpp
+input_script.cpp
+js_heap.cpp
+js_profiler.cpp
+lan.cpp
+lan_api.cpp
+network.cpp
+network_api.cpp
+package_api.cpp
+removals.cpp
+render_workers.cpp
+screenshot.cpp
+sound_api.cpp
+text_shaper.cpp
+video_api.cpp
