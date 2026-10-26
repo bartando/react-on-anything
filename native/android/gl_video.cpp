@@ -287,4 +287,6 @@ int find(const char*) { return kNone; }
 const char* name(int) { return ""; }
 int count() { return 0; }
 std::string names() { return ""; }
+bool available() { return false; }
+void set_available(bool) {}
 } // namespace upscalers
