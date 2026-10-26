@@ -4,10 +4,6 @@
 #include "network.hpp"
 #include "image_loader.hpp"
 #include "archives.hpp"
-#include "packages.hpp"
-#include "removals.hpp"
-#include "browser_capture.hpp"
-#include "lan.hpp"
 #include "app_config.hpp"
 #define SDL_MAIN_HANDLED
 #include <SDL2/SDL.h>
@@ -26,22 +22,15 @@ extern "C" {
 void er_register_assets(void);
 }
 #include "baked_sounds.h"
-#include "damage_tracker.hpp"
-#include "frame_stats.hpp"
-#include "canvas_trace.hpp"
-#include "gpu_renderer.hpp"
 #include "gl_presenter.hpp"
 #include "host_api.hpp"
+#include "host_core.hpp"
 #include "host_platform.hpp"
 #include "actions.hpp"
 #include "control.hpp"
-#include "input_script.hpp"
-#include "js_heap.hpp"
-#include "js_profiler.hpp"
+#include "pad_input.hpp"
 #include "render_workers.hpp"
 #include "screenshot.hpp"
-#include "text_shaper.hpp"
-#include "video_api.hpp"
 #include "storage_stats.hpp"
 #include "directory_records.hpp"
 #include <algorithm>
@@ -70,6 +59,11 @@ std::int64_t now_us() {
 
 std::uint32_t perf_clock() { return static_cast<std::uint32_t>(now_us()); }
 
+void log_line(const char* line) {
+  std::printf("%s\n", line);
+  std::fflush(stdout); // The dev watcher reads a pipe, where stdout is fully buffered.
+}
+
 // Keyboard and controller bindings; triggers are axes, read separately. See docs/NAVIGATION.md.
 constexpr std::pair<SDL_Keycode, HostAction> kKeyActions[] = {
   {SDLK_UP, HostAction::up}, {SDLK_DOWN, HostAction::down}, {SDLK_LEFT, HostAction::left},
@@ -91,12 +85,6 @@ float key_travel(SDL_Scancode key) {
   return SDL_GetModState() & KMOD_SHIFT ? kLightTravel : 1;
 }
 
-// Triggers are analog: an action on crossing half travel, re-armed below a quarter.
-bool crossed(bool& down, float travel) {
-  if (!down && travel > 0.5f) return down = true;
-  if (down && travel < 0.25f) down = false;
-  return false;
-}
 constexpr std::pair<SDL_GameControllerButton, HostAction> kButtonActions[] = {
   {SDL_CONTROLLER_BUTTON_DPAD_UP, HostAction::up}, {SDL_CONTROLLER_BUTTON_DPAD_DOWN, HostAction::down},
   {SDL_CONTROLLER_BUTTON_DPAD_LEFT, HostAction::left}, {SDL_CONTROLLER_BUTTON_DPAD_RIGHT, HostAction::right},
@@ -105,12 +93,11 @@ constexpr std::pair<SDL_GameControllerButton, HostAction> kButtonActions[] = {
   {SDL_CONTROLLER_BUTTON_Y, HostAction::triangle}, {SDL_CONTROLLER_BUTTON_X, HostAction::square},
   {SDL_CONTROLLER_BUTTON_START, HostAction::options},
 };
+// Repeater sources: a key's scancode, or a controller button past this.
+constexpr int kButtonSource = SDL_NUM_SCANCODES;
 
 float stick(SDL_GameController* controller, SDL_GameControllerAxis axis) {
-  constexpr float deadzone = 0.16f;
-  const float value = std::clamp(SDL_GameControllerGetAxis(controller, axis) / 32767.0f, -1.0f, 1.0f);
-  if (std::abs(value) < deadzone) return 0;
-  return std::copysign((std::abs(value) - deadzone) / (1 - deadzone), value);
+  return stick_deadzone(SDL_GameControllerGetAxis(controller, axis) / 32767.0f);
 }
 
 GamepadState read_gamepad(SDL_GameController* controller) {
@@ -134,8 +121,6 @@ GamepadState read_gamepad(SDL_GameController* controller) {
     for (std::uint32_t i = 0; i < std::size(buttons); ++i)
       if (buttons[i] >= 0 && SDL_GameControllerGetButton(controller, static_cast<SDL_GameControllerButton>(buttons[i])))
         state.buttons |= 1u << i;
-    if (state.l2 > 0.5f) state.buttons |= 1u << 10;
-    if (state.r2 > 0.5f) state.buttons |= 1u << 11;
   }
   const Uint8* keys = SDL_GetKeyboardState(nullptr);
   for (const auto& [key, button] : kKeyButtons)
@@ -147,56 +132,38 @@ GamepadState read_gamepad(SDL_GameController* controller) {
   return state;
 }
 
+HostCore::Config core_config() {
+  HostCore::Config config;
+  config.width = width;
+  config.height = height;
+  config.clock_us = now_us;
+  config.log = log_line;
+  config.option = HostCore::env_option;
+  return config;
+}
+
 struct Host {
   SDL_Window* window = nullptr;
   SDL_GLContext context = nullptr;
   SDL_GameController* controller = nullptr;
   GlPresenter presenter;
-  FrameStats stats;
-  bool log_frames = true, running = true, runtime_started = false, backend_started = false;
+  HostCore core{core_config()};
+  bool running = true;
   // The interactive loop leaves a frame that changed nothing unpresented, as the PS5 host does; the
   // self-tests read back every frame. exposed forces the next frame out after the window reappears.
   bool skip_still = false, exposed = false;
-  int render_worker_count = 1;
-  bool tracing = false;
-  GpuRenderer gpu;
-  Uint32 previous_tick = 0, next_repeat = 0, next_image_stats = 0;
-  // When the last frame callback ran: the next one advances by the whole frame period, swap wait included.
-  std::int64_t previous_step_us = 0;
   // The monitor's frame interval, for picking video frames by display frame.
   std::int64_t display_frame_us = 16667;
-  std::string image_stats;
-  const char* held_action = nullptr;
-  InputScript script;
+  Repeater repeater;
   Control control;
   bool controlled = false;
   struct Wait { int client; Uint32 until; };
   std::vector<Wait> waits;
-  Uint32 slow_frame_us = 33000;
-  SDL_Scancode held_key = SDL_SCANCODE_UNKNOWN;
-  SDL_GameControllerButton held_button = SDL_CONTROLLER_BUTTON_INVALID;
-  GcScheduler gc_scheduler{now_us};
-  JsProfiler profiler{now_us};
-  bool l2_down = false, r2_down = false, key_l2_down = false, key_r2_down = false;
+  TriggerEdge l2, r2, key_l2, key_r2;
   bool mouse_down = false; // the left button, a finger on the touchscreen
-  VirtualPad virtual_pad;
 
   ~Host() {
-    if (tracing) canvas_trace::stop();
-    gpu.stop();
-    roa_stop_images();
-    archives::stop();
-    browser_capture::stop();
-    lan::stop();
-  packages::stop();
-  removals::stop();
-  network::stop();
-    video_layers::stop();
-    if (runtime_started) er_runtime_shutdown();
-    text_shaper::shutdown();
-    roa_stop_sound();
-    render_workers::stop();
-    if (backend_started) er_software_backend_destroy();
+    core.stop();
     presenter.release(); // GL objects must be deleted before their context.
     desktop_set_controller(nullptr);
     if (controller) SDL_GameControllerClose(controller);
@@ -205,7 +172,8 @@ struct Host {
     SDL_Quit();
   }
 
-  bool start() {
+  // `testing` opens a small window of a fixed size, which the self-test's snapshots compare between runs.
+  bool start(bool testing) {
     SDL_SetMainReady();
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMECONTROLLER) != 0) return false;
     if (SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 4) ||
@@ -213,8 +181,15 @@ struct Host {
         SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE) ||
         SDL_GL_SetAttribute(SDL_GL_CONTEXT_FLAGS, SDL_GL_CONTEXT_FORWARD_COMPATIBLE_FLAG) ||
         SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1)) return false;
-    window = SDL_CreateWindow(ROA_NAME,
-      SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, width/2, height/2,
+    // Half the layout in points (a Retina screen doubles it), shrunk to fit the screen. Even so the
+    // window manager may trim a few points off a new window, differently from launch to launch.
+    int window_w = testing ? 960 : width / 2, window_h = testing ? 540 : height / 2;
+    if (SDL_Rect usable; !testing && SDL_GetDisplayUsableBounds(0, &usable) == 0 && usable.w > 0 && usable.h > 0) {
+      const double fit = std::min({1.0, static_cast<double>(usable.w) / window_w, static_cast<double>(usable.h) / window_h});
+      window_w = static_cast<int>(window_w * fit);
+      window_h = static_cast<int>(window_h * fit);
+    }
+    window = SDL_CreateWindow(ROA_NAME, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, window_w, window_h,
       SDL_WINDOW_OPENGL | SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI);
     if (!window || !(context = SDL_GL_CreateContext(window))) return false;
     SDL_GL_SetSwapInterval(1);
@@ -225,52 +200,14 @@ struct Host {
       if (SDL_IsGameController(i) && (controller = SDL_GameControllerOpen(i))) break;
     std::printf("Physical controller: %s\n", controller ? SDL_GameControllerName(controller) : "not connected");
     desktop_set_controller(controller);
-    previous_tick = SDL_GetTicks();
-    previous_step_us = now_us();
     er_perf_set_clock(perf_clock);
     return presenter.init(width, height);
   }
 
   bool boot(const char* path) {
-    backend_started = er_software_backend_init(width, height);
-    if (!backend_started || !damage_tracker_install(width, height)) return false;
-    // The presenter draws qualifying <Image layer> images itself; ROA_LAYERS=0 rasterizes them all.
-    const char* layers = std::getenv("ROA_LAYERS");
-    er_set_layers_enabled((!layers || std::atoi(layers) != 0) && presenter.layers_supported());
-    // ROA_RENDER_WORKERS=1 renders single-core, for comparisons.
-    const char* workers = std::getenv("ROA_RENDER_WORKERS");
-    // The GPU renderer needs the ops in drawing order: one worker.
-    // Opt-in on the desktop, with ROA_GPU set to anything but 0, as the Switch and Android read it.
-    const char* gpu_option = std::getenv("ROA_GPU");
-    const bool gpu_drawing = gpu_option && std::strcmp(gpu_option, "0") != 0;
-    const bool gpu_mirroring = !gpu_drawing && std::getenv("ROA_GPU_MIRROR") != nullptr;
-    render_worker_count = render_workers::start(gpu_drawing || gpu_mirroring ? 1
-                                                : workers && std::atoi(workers) > 0 ? std::atoi(workers)
-                                                                                    : render_workers::available_cpus());
-    std::printf("[ROA] render workers=%d of %d, cpus=%d\n", render_worker_count, render_workers::max_workers(),
-                render_workers::available_cpus());
-    // ROA_CANVAS_TRACE=<file> lists every drawing primitive per commit (canvas_trace.hpp).
-    // ROA_GPU=1 draws with OpenGL instead of the software rasterizer (gpu_renderer.hpp);
-    // ROA_GPU_MIRROR=1 draws with both and compares the two at each shot.
-    if (gpu_drawing || gpu_mirroring) {
-      if (!gpu.start(width, height, gpu_drawing ? GpuRenderer::Mode::draw : GpuRenderer::Mode::mirror))
-        std::fprintf(stderr, "[ROA] gpu renderer: could not start\n");
-    } else if (const char* trace = std::getenv("ROA_CANVAS_TRACE")) {
-      tracing = canvas_trace::start(trace, render_worker_count);
-      if (!tracing) std::fprintf(stderr, "[ROA] canvas trace: cannot write %s\n", trace);
-    }
-    if (network::start()) roa_start_images();
-    roa_start_sound();
-    ErRuntimeConfig cfg = {};
-    cfg.screen_width = width; cfg.screen_height = height; cfg.screen_scale = 2;
-    cfg.memory_limit = kJsMemoryLimit;
-    cfg.malloc_functions = js_heap_functions();
-    cfg.max_stack_size = 1024 * 1024;
-    cfg.install_host_globals = roa_install_host_api;
-    runtime_started = er_runtime_init(&cfg);
-    if (!runtime_started) return false;
+    if (!core.start_engine(presenter) || !core.start_runtime()) return false;
     // ROA_PROFILE=<file> samples JavaScript; the folded stacks are written there on exit.
-    if (std::getenv("ROA_PROFILE")) profiler.start(JS_GetRuntime(er_runtime_context()), 1000);
+    if (std::getenv("ROA_PROFILE")) core.profiler.start(JS_GetRuntime(er_runtime_context()), 1000);
     if (controlled) {
       // Read when the bundle loads: Text reports its content to the inspector only then.
       JSContext* ctx = er_runtime_context();
@@ -278,68 +215,7 @@ struct Host {
       JS_SetPropertyStr(ctx, global, "__roaInspecting", JS_TRUE);
       JS_FreeValue(ctx, global);
     }
-    er_register_assets();
-    text_shaper::install(ROA_FONT_DIR, [](const char* line) { std::printf("[ROA] %s\n", line); });
-    FILE* file = std::fopen(path, "rb");
-    if (!file) return false;
-    bool ok = std::fseek(file, 0, SEEK_END) == 0;
-    const long size = ok ? std::ftell(file) : -1;
-    ok = size >= 0 && std::fseek(file, 0, SEEK_SET) == 0;
-    const std::size_t length = ok ? static_cast<std::size_t>(size) : 0;
-    // QuickJS's source parser requires a trailing NUL beyond the supplied length.
-    std::vector<char> source(length + 1, '\0');
-    if (ok) ok = std::fread(source.data(), 1, length, file) == length;
-    std::fclose(file);
-    return ok && er_runtime_load_source(source.data(), length, path);
-  }
-
-  const char* hold(const char* action, SDL_Scancode key,
-                   SDL_GameControllerButton button = SDL_CONTROLLER_BUTTON_INVALID) {
-    held_action = action; held_key = key; held_button = button;
-    next_repeat = SDL_GetTicks() + 350;
-    return action;
-  }
-
-  // Calls the runtime's input entry `name` with `argc` arguments, which it frees.
-  bool call_input(const char* name, int argc, JSValue* argv) {
-    gc_scheduler.input(now_us());
-    er_perf_phase_begin(ER_PERF_PHASE_JS);
-    JSContext* ctx = er_runtime_context();
-    JSValue global = JS_GetGlobalObject(ctx);
-    JSValue fn = JS_GetPropertyStr(ctx, global, name);
-    JSValue result = JS_Call(ctx, fn, global, argc, argv);
-    const bool ok = !JS_IsException(result);
-    if (!ok) {
-      JSValue error = JS_GetException(ctx);
-      const char* message = JS_ToCString(ctx, error);
-      std::fprintf(stderr, "Input failed: %s\n", message ? message : "JS exception");
-      if (message) JS_FreeCString(ctx, message);
-      JS_FreeValue(ctx, error);
-    }
-    JS_FreeValue(ctx, result);
-    for (int i = 0; i < argc; ++i) JS_FreeValue(ctx, argv[i]);
-    JS_FreeValue(ctx, fn); JS_FreeValue(ctx, global);
-    er_perf_phase_end(ER_PERF_PHASE_JS);
-    return ok;
-  }
-
-  bool dispatch(const char* action) {
-    JSValue arg = JS_NewString(er_runtime_context(), action);
-    return call_input("__roaDispatch", 1, &arg);
-  }
-
-  // A controller touchpad's first finger at (x, y) 0..1, or lifted.
-  bool touch(bool down, float x, float y) {
-    JSContext* ctx = er_runtime_context();
-    JSValue args[2] = {down ? JS_NewFloat64(ctx, x) : JS_NULL, down ? JS_NewFloat64(ctx, y) : JS_NULL};
-    return call_input("__roaTouch", 2, args);
-  }
-
-  // A touchscreen's first finger at (x, y) in screen px, or lifted: the mouse's left button here.
-  bool screen_touch(bool down, float x, float y) {
-    JSContext* ctx = er_runtime_context();
-    JSValue args[2] = {down ? JS_NewFloat64(ctx, x) : JS_NULL, down ? JS_NewFloat64(ctx, y) : JS_NULL};
-    return call_input("__roaScreenTouch", 2, args);
+    return core.load_file(er_register_assets, ROA_FONT_DIR, path);
   }
 
   // The mouse in window points as a finger in screen px: the window shows the layout scaled.
@@ -347,31 +223,14 @@ struct Host {
     int window_w = 0, window_h = 0;
     SDL_GetWindowSize(window, &window_w, &window_h);
     if (window_w <= 0 || window_h <= 0) return true;
-    return screen_touch(down, static_cast<float>(x) * width / window_w, static_cast<float>(y) * height / window_h);
+    return core.screen_touch(down, static_cast<float>(x) * width / window_w, static_cast<float>(y) * height / window_h);
   }
 
-  // A development hook's result as text: strings as they are, anything else through JSON.
-  std::string call_js(const char* name, const char* arg) {
-    JSContext* ctx = er_runtime_context();
-    JSValue global = JS_GetGlobalObject(ctx);
-    JSValue fn = JS_GetPropertyStr(ctx, global, name);
-    JSValue argument = arg ? JS_NewString(ctx, arg) : JS_UNDEFINED;
-    JSValue result = JS_Call(ctx, fn, global, arg ? 1 : 0, &argument);
-    std::string text;
-    if (JS_IsException(result)) {
-      JSValue error = JS_GetException(ctx);
-      const char* message = JS_ToCString(ctx, error);
-      text = std::string("error: ") + (message ? message : "JS exception");
-      if (message) JS_FreeCString(ctx, message);
-      JS_FreeValue(ctx, error);
-    } else {
-      JSValue json = JS_IsString(result) ? JS_DupValue(ctx, result) : JS_JSONStringify(ctx, result, JS_UNDEFINED, JS_UNDEFINED);
-      if (const char* value = JS_ToCString(ctx, json)) { text = value; JS_FreeCString(ctx, value); }
-      JS_FreeValue(ctx, json);
-    }
-    JS_FreeValue(ctx, result); JS_FreeValue(ctx, argument);
-    JS_FreeValue(ctx, fn); JS_FreeValue(ctx, global);
-    return text;
+  // Polled state, not key-up events: synthetic self-test presses never stay held.
+  bool held_down() const {
+    const int source = repeater.source();
+    if (source < kButtonSource) return SDL_GetKeyboardState(nullptr)[source];
+    return controller && SDL_GameControllerGetButton(controller, static_cast<SDL_GameControllerButton>(source - kButtonSource));
   }
 
   // Commands from tools/ps5_drive.py, a few a frame so a busy client cannot stall rendering.
@@ -391,26 +250,26 @@ struct Host {
       if (verb == "press") {
         const bool known = std::any_of(std::begin(kActionNames), std::end(kActionNames),
                                        [&](const char* name) { return arg == name; });
-        if (known && !dispatch(arg.c_str())) return false;
+        if (known && !core.dispatch(arg.c_str())) return false;
         Control::reply(client, known ? "ok" : "unknown action: " + arg);
       } else if (verb == "hold" || verb == "release" || verb == "trigger") {
         std::string step = line;
         std::replace(step.begin(), step.end(), ' ', ':');
         char error[160];
-        Control::reply(client, virtual_pad.apply(step, SDL_GetTicks64(), error, sizeof error) ? "ok" : std::string(error));
+        Control::reply(client, core.virtual_pad.apply(step, SDL_GetTicks64(), error, sizeof error) ? "ok" : std::string(error));
       } else if (verb == "shot") {
         // `shot <path> full` keeps the framebuffer's full resolution, for images meant to be shown.
         const bool full = arg.size() > 5 && arg.ends_with(" full");
         const std::string path = full ? arg.substr(0, arg.size() - 5) : arg;
         Control::reply(client, save_screenshot(path.c_str(), full ? 1 : 2) ? path : std::string("error: ") + std::strerror(errno));
       } else if (verb == "snapshot") {
-        Control::reply(client, call_js("__roaInspect", nullptr));
+        Control::reply(client, core.call_js("__roaInspect", nullptr));
       } else if (verb == "focus") {
-        Control::reply(client, call_js("__roaFocus", arg.c_str()) == "true" ? "ok" : "not found: " + arg);
+        Control::reply(client, core.call_js("__roaFocus", arg.c_str()) == "true" ? "ok" : "not found: " + arg);
       } else if (verb == "script") {
         // Runs input-script steps from now on, e.g. a touchpad swipe.
         char error[512] = {};
-        Control::reply(client, script.parse(arg.c_str(), error, sizeof error) ? "ok" : std::string("error: ") + error);
+        Control::reply(client, core.script.parse(arg.c_str(), error, sizeof error) ? "ok" : std::string("error: ") + error);
       } else if (verb == "logs") {
         Control::reply(client, control.take_logs());
       } else if (verb == "wait") {
@@ -425,44 +284,7 @@ struct Host {
     return true;
   }
 
-  // Runs the scripted action that is due; it goes through the same dispatch as keys.
-  bool play_script() {
-    const char* action = script.next(SDL_GetTicks64());
-    if (!action) return true;
-    if (log_frames) std::printf("[ROA] script: %s\n", action);
-    if (!std::strcmp(action, "quit")) running = false;
-    else if (VirtualPad::is_step(action)) {
-      char error[160];
-      if (!virtual_pad.apply(action, SDL_GetTicks64(), error, sizeof error)) std::fprintf(stderr, "script: %s\n", error);
-    } else if (!std::strncmp(action, "shot:", 5)) {
-      // The preview keeps shots in the sandbox's temporary folder rather than the app's sources.
-      char path[PATH_MAX];
-      const std::string name = std::string("/temp0/") + (action + 5) + ".bmp";
-      // With the GPU drawing, the software framebuffer holds only what it left to the CPU.
-      const bool saved = host::resolve_path(name.c_str(), path, sizeof path) &&
-                         (gpu.drawing() ? gpu.save_screen(presenter, path) : save_screenshot(path));
-      std::printf("[ROA] shot %s: %s\n", path, saved ? "saved" : std::strerror(errno));
-      if (saved && gpu.active() && !gpu.drawing()) {
-        const std::string base(path, std::strlen(path) - 4);
-        std::printf("[ROA] %s\n", gpu.compare(er_software_framebuffer(), presenter, base).c_str());
-      }
-    } else if (!std::strncmp(action, "touch:", 6)) {
-      float x = 0, y = 0;
-      return touch(std::sscanf(action + 6, "%f,%f", &x, &y) == 2, x, y);
-    } else if (!std::strncmp(action, "screen:", 7)) {
-      float x = 0, y = 0;
-      return screen_touch(std::sscanf(action + 7, "%f,%f", &x, &y) == 2, x, y);
-    } else return dispatch(action);
-    return true;
-  }
-
-  bool frame(bool swap = true) {
-    if (const char* line = stats.start_frame(now_us()); line && log_frames) {
-      std::printf("[ROA] %s\n", line);
-      std::fflush(stdout); // The dev watcher reads a pipe, where stdout is fully buffered.
-    }
-    // Input and JavaScript commit layout only; the commit after them paints the frame once.
-    er_set_raster_deferred(true);
+  bool read_input() {
     SDL_Event event;
     while (SDL_PollEvent(&event)) {
       const char* action = nullptr;
@@ -474,17 +296,20 @@ struct Host {
         // Escape stands for the PS button: it leaves. O is Options.
         if (event.key.keysym.sym == SDLK_ESCAPE) running = false;
         for (const auto& [code, mapped] : kKeyActions) {
-          if (code == event.key.keysym.sym) action = repeats(mapped) ? hold(action_name(mapped), key) : action_name(mapped);
+          if (code != event.key.keysym.sym) continue;
+          action = action_name(mapped);
+          repeater.press(mapped, key, SDL_GetTicks64());
         }
       } else if (event.type == SDL_CONTROLLERBUTTONDOWN) {
         const auto button = static_cast<SDL_GameControllerButton>(event.cbutton.button);
         for (const auto& [code, mapped] : kButtonActions) {
-          if (code == button)
-            action = repeats(mapped) ? hold(action_name(mapped), SDL_SCANCODE_UNKNOWN, button) : action_name(mapped);
+          if (code != button) continue;
+          action = action_name(mapped);
+          repeater.press(mapped, kButtonSource + button, SDL_GetTicks64());
         }
       } else if ((event.type == SDL_CONTROLLERTOUCHPADDOWN || event.type == SDL_CONTROLLERTOUCHPADMOTION ||
                   event.type == SDL_CONTROLLERTOUCHPADUP) && event.ctouchpad.touchpad == 0 && event.ctouchpad.finger == 0) {
-        if (!touch(event.type != SDL_CONTROLLERTOUCHPADUP, event.ctouchpad.x, event.ctouchpad.y)) return false;
+        if (!core.touch(event.type != SDL_CONTROLLERTOUCHPADUP, event.ctouchpad.x, event.ctouchpad.y)) return false;
       } else if ((event.type == SDL_MOUSEBUTTONDOWN || event.type == SDL_MOUSEBUTTONUP) &&
                  event.button.button == SDL_BUTTON_LEFT) {
         mouse_down = event.type == SDL_MOUSEBUTTONDOWN;
@@ -492,115 +317,49 @@ struct Host {
       } else if (event.type == SDL_MOUSEMOTION && mouse_down) {
         if (!mouse_touch(true, event.motion.x, event.motion.y)) return false;
       } else if (event.type == SDL_CONTROLLERAXISMOTION) {
-        const auto trigger = [&](bool& down, const char* name) {
-          if (crossed(down, event.caxis.value / 32767.0f)) action = name;
-        };
-        if (event.caxis.axis == SDL_CONTROLLER_AXIS_TRIGGERLEFT) trigger(l2_down, action_name(HostAction::l2));
-        else if (event.caxis.axis == SDL_CONTROLLER_AXIS_TRIGGERRIGHT) trigger(r2_down, action_name(HostAction::r2));
+        const float travel = event.caxis.value / 32767.0f;
+        if (event.caxis.axis == SDL_CONTROLLER_AXIS_TRIGGERLEFT && l2.crossed(travel)) action = action_name(HostAction::l2);
+        if (event.caxis.axis == SDL_CONTROLLER_AXIS_TRIGGERRIGHT && r2.crossed(travel)) action = action_name(HostAction::r2);
       }
-      if (action && !dispatch(action)) return false;
+      if (action && !core.dispatch(action)) return false;
     }
-    if (!play_script()) return false;
+    return true;
+  }
+
+  bool frame(bool swap = true) {
+    core.begin_frame();
+    if (!read_input() || !core.play_script(SDL_GetTicks64())) return false;
+    if (core.quit_requested()) running = false;
     if (controlled && !serve_control()) return false;
-    if (held_action) {
-      // Polled state, not key-up events: synthetic self-test presses never stay held.
-      const bool down = held_key != SDL_SCANCODE_UNKNOWN ? SDL_GetKeyboardState(nullptr)[held_key]
-        : controller && SDL_GameControllerGetButton(controller, held_button);
-      const Uint32 ticks = SDL_GetTicks();
-      if (!down) held_action = nullptr;
-      else if (SDL_TICKS_PASSED(ticks, next_repeat)) {
-        next_repeat = ticks + 110;
-        if (!dispatch(held_action)) return false;
-      }
-    }
+    if (const char* held = repeater.due(held_down(), SDL_GetTicks64()); held && !core.dispatch(held)) return false;
     if (!running) return true;
-    if (crossed(key_l2_down, key_travel(SDL_SCANCODE_Z)) && !dispatch(action_name(HostAction::l2))) return false;
-    if (crossed(key_r2_down, key_travel(SDL_SCANCODE_C)) && !dispatch(action_name(HostAction::r2))) return false;
-    GamepadState state = read_gamepad(controller);
-    // What a tool holds presses like the controller: the buttons' actions, once (directions do not repeat).
-    for (std::uint32_t pressed = virtual_pad.merge(state, SDL_GetTicks64()), i = 0; pressed; pressed >>= 1, ++i) {
-      const char* held = pressed & 1 ? VirtualPad::action(i) : nullptr;
-      if (held && !dispatch(held)) return false;
-    }
-    roa_set_gamepad(state);
-    stats.lap(FrameStats::input, now_us());
-    er_perf_phase_begin(ER_PERF_PHASE_JS);
-    er_runtime_pump();
-    const std::int64_t step_us = now_us();
-    const bool stepped = roa_frame(er_runtime_context(), std::min(50.0, (step_us - previous_step_us) / 1000.0));
-    previous_step_us = step_us;
-    er_perf_phase_end(ER_PERF_PHASE_JS);
-    if (!stepped) {
-      std::fprintf(stderr, "Frame callback failed\n");
+    if (key_l2.crossed(key_travel(SDL_SCANCODE_Z)) && !core.dispatch(action_name(HostAction::l2))) return false;
+    if (key_r2.crossed(key_travel(SDL_SCANCODE_C)) && !core.dispatch(action_name(HostAction::r2))) return false;
+    if (!core.deliver_pad(read_gamepad(controller), SDL_GetTicks64()) || !core.advance(core.wall_elapsed_ms()))
       return false;
-    }
-    er_set_raster_deferred(false);
-    if (tracing) canvas_trace::commit_begin();
-    er_commit();
-    if (tracing) canvas_trace::commit_end();
-    const bool redrawn = gpu.active() && gpu.replay();
-    stats.lap(FrameStats::update, now_us());
     if (roa_exit_requested()) {
       running = false;
       return true;
     }
     int sw = 0, sh = 0;
     SDL_GL_GetDrawableSize(window, &sw, &sh);
-    const std::size_t repainted = damage_tracker_area();
-    const bool still = skip_still && !exposed && !redrawn && sw > 0 && sh > 0 &&
-                       presenter.unchanged(damage_tracker_rects(), damage_tracker_moves(), sw, sh);
+    const HostCore::Presented presented = core.present(sw, sh, display_frame_us, skip_still && !exposed);
     exposed = false;
-    if (sw > 0 && sh > 0 && !still) {
-      er_perf_phase_begin(ER_PERF_PHASE_PRESENT);
-      int layer_count = 0;
-      const ERLayer* layers = er_get_layers(&layer_count);
-      presenter.set_layers({layers, static_cast<std::size_t>(layer_count)});
-      video_layers::update(now_us(), display_frame_us);
-      const bool drawn = gpu.drawing() ? presenter.draw_texture(gpu.texture(), sw, sh)
-                                       : presenter.draw(er_software_framebuffer(), damage_tracker_rects(),
-                                                        damage_tracker_moves(), sw, sh);
-      if (!drawn) return false;
-      er_perf_phase_end(ER_PERF_PHASE_PRESENT);
-      {
-        const GlPresenter::Timing& t = presenter.last_timing();
-        stats.note_present(t.upload_us, t.draw_us, t.upload_bytes);
-      }
-    }
-    if (sw > 0 && sh > 0) damage_tracker_clear();
-    stats.lap(FrameStats::present, now_us());
-    if (still) {
+    if (!presented.ok) return false;
+    if (presented.still) {
       SDL_DisplayMode mode{};
       SDL_Delay(1000 / (SDL_GetWindowDisplayMode(window, &mode) == 0 && mode.refresh_rate > 0 ? mode.refresh_rate : 60));
-    } else if (swap) SDL_GL_SwapWindow(window);
-    stats.lap(FrameStats::swap, now_us());
-    if (const char* line = gc_scheduler.frame(JS_GetRuntime(er_runtime_context()), now_us(), repainted,
-                                              static_cast<std::size_t>(width) * height);
-        line && log_frames)
-      std::printf("[ROA] %s\n", line);
-    const Uint32 now = SDL_GetTicks();
-    embedded_renderer_tick(std::min<Uint32>(now - previous_tick, 50));
-    previous_tick = now;
-    if (const char* line = stats.end_frame(slow_frame_us); line && log_frames) {
-      std::printf("[ROA] %s\n", line);
-      std::fflush(stdout);
+    } else if (swap) {
+      SDL_GL_SwapWindow(window);
     }
+    core.end_frame();
     if (const int hz = roa_take_refresh_request()) {
       // The preview keeps the monitor's rate, but rebuilds the presenter as the PS5 host must, so that
       // path runs here too, and reports the requested rate as the one the display accepted.
       presenter.release();
       if (!presenter.init(width, height)) return false;
       roa_set_refresh_rate(hz);
-      std::printf("[ROA] refresh switch to %d Hz (the preview keeps the monitor's rate)\n", hz);
-      std::fflush(stdout);
-    }
-    // The PS5 host prints this with its memory line; here every two seconds while it changes.
-    if (SDL_TICKS_PASSED(now, next_image_stats)) {
-      next_image_stats = now + 2000;
-      if (std::string line = images::stats(); line != image_stats) {
-        std::printf("[ROA] images: %s\n", line.c_str());
-        std::fflush(stdout);
-        image_stats = std::move(line);
-      }
+      core.logf("[ROA] refresh switch to %d Hz (the preview keeps the monitor's rate)", hz);
     }
     return !*er_runtime_last_error();
   }
@@ -849,12 +608,12 @@ bool self_test(Host& host) {
       !expect(0, 1, 1) || !host.snapshot("texture-fullscreen.ppm")) return false;
   std::puts("PASS: software framebuffer → OpenGL texture, channel order, orientation, React state/focus, simulated controller and fullscreen.");
   // The snapshots are compared against a single-core run, which proves nothing if no commit forked.
-  if (host.render_worker_count > 1 && render_workers::forked_commits() == 0) {
-    std::fprintf(stderr, "Render workers: %d installed, but no commit rendered in parallel\n", host.render_worker_count);
+  const int workers = host.core.render_worker_count();
+  if (workers > 1 && render_workers::forked_commits() == 0) {
+    std::fprintf(stderr, "Render workers: %d installed, but no commit rendered in parallel\n", workers);
     return false;
   }
-  if (host.render_worker_count > 1)
-    std::printf("PASS: %u commits rendered across %d workers.\n", render_workers::forked_commits(), host.render_worker_count);
+  if (workers > 1) std::printf("PASS: %u commits rendered across %d workers.\n", render_workers::forked_commits(), workers);
   return true;
 }
 } // namespace
@@ -867,8 +626,7 @@ int main(int argc, char** argv) {
   const bool testing = argc > 2 && !std::strcmp(argv[2], "--self-test");
   if (testing) SDL_setenv("SDL_AUDIODRIVER", "dummy", 1);
   Host host;
-  host.log_frames = !testing;
-  bool ok = host.start();
+  bool ok = host.start(testing);
   if (ok && testing) ok = color_test(host);
   if (ok && !testing) {
     if (const char* path = std::getenv("ROA_CONTROL")) {
@@ -880,28 +638,17 @@ int main(int argc, char** argv) {
   if (ok) ok = host.boot(argv[1]);
   if (ok && testing) ok = self_test(host);
   else if (ok) {
-    if (const char* ms = std::getenv("ROA_SLOW_FRAME_MS")) {
-      char* rest = nullptr;
-      const long value = std::strtol(ms, &rest, 10);
-      if (*ms && !*rest && value > 0 && value <= 60000) host.slow_frame_us = static_cast<Uint32>(value) * 1000;
-      else std::fprintf(stderr, "ROA_SLOW_FRAME_MS: expected milliseconds (1-60000), got '%s'\n", ms);
-    }
-    if (const char* text = std::getenv("ROA_INPUT_SCRIPT")) {
-      char error[160];
-      ok = host.script.parse(text, error, sizeof error);
-      if (!ok) std::fprintf(stderr, "ROA_INPUT_SCRIPT: %s\n", error);
-    }
-    if (ok && argc > 2 && !std::strcmp(argv[2], "--fullscreen")) {
+    if (argc > 2 && !std::strcmp(argv[2], "--fullscreen")) {
       ok = SDL_SetWindowFullscreen(host.window, SDL_WINDOW_FULLSCREEN_DESKTOP) == 0;
       SDL_ShowCursor(SDL_DISABLE);
     }
     host.skip_still = true;
     while (ok && host.running) ok = host.frame();
-    if (host.profiler.running()) {
-      host.profiler.stop();
+    if (JsProfiler& profiler = host.core.profiler; profiler.running()) {
+      profiler.stop();
       const char* path = std::getenv("ROA_PROFILE");
-      std::printf("profile: %llu samples, %s %s\n", static_cast<unsigned long long>(host.profiler.samples()),
-                  host.profiler.write(path) ? "saved to" : "could not write", path);
+      std::printf("profile: %llu samples, %s %s\n", static_cast<unsigned long long>(profiler.samples()),
+                  profiler.write(path) ? "saved to" : "could not write", path);
     }
   }
   if (!ok) std::fprintf(stderr, "Texture proof failed: %s / %s\n", SDL_GetError(), er_runtime_last_error());

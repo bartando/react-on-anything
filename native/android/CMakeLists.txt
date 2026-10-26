@@ -32,7 +32,7 @@ add_library(main SHARED host.cpp host_platform.cpp network_platform.cpp unavaila
   ${SHARED}/package_api.cpp ${SHARED}/browser_capture_api.cpp ${SHARED}/lan.cpp ${SHARED}/lan_api.cpp
   ${SHARED}/image_loader.cpp ${SHARED}/image_api.cpp ${SHARED}/sound_api.cpp ${SHARED}/audio_sink.cpp
   ${SHARED}/audio_output_api.cpp ${SHARED}/host_api.cpp ${SHARED}/removals.cpp "${HUI_ROOT}/src/audio/mixer.cpp"
-  ${SHARED}/gl_presenter.cpp ${SHARED}/frame_stats.cpp ${SHARED}/js_heap.cpp ${SHARED}/js_profiler.cpp
+  ${SHARED}/host_core.cpp ${SHARED}/gl_presenter.cpp ${SHARED}/frame_stats.cpp ${SHARED}/js_heap.cpp ${SHARED}/js_profiler.cpp
   ${SHARED}/damage_tracker.cpp ${SHARED}/canvas_trace.cpp ${SHARED}/gpu_renderer.cpp ${SHARED}/render_workers.cpp
   ${SHARED}/input_script.cpp ${SHARED}/screenshot.cpp ${SHARED}/text_shaper.cpp ${SHARED}/video_api.cpp ${SHARED}/video_player.cpp ${SHARED}/annex_b.cpp
   ${SHARED}/video_subtitles.cpp

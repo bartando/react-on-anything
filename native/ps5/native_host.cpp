@@ -5,11 +5,6 @@
 
 #include "network.hpp"
 #include "archives.hpp"
-#include "packages.hpp"
-#include "removals.hpp"
-#include "browser_capture.hpp"
-#include "lan.hpp"
-#include "render_workers.hpp"
 #include "thread_name.hpp"
 #include "app_config.hpp"
 #include "async_log.hpp"
@@ -17,20 +12,14 @@
 #include "platform/ps5/pad.hpp"
 #include "platform/ps5/system.hpp"
 #include "core/input.hpp"
-#include "damage_tracker.hpp"
-#include "frame_stats.hpp"
 #include "gl_presenter.hpp"
-#include "gpu_renderer.hpp"
 #include "image_loader.hpp"
 #include "host_api.hpp"
+#include "host_core.hpp"
 #include "host_platform.hpp"
 #include "actions.hpp"
 #include "input_script.hpp"
-#include "js_heap.hpp"
-#include "js_profiler.hpp"
 #include "payload_loader.hpp"
-#include "screenshot.hpp"
-#include "text_shaper.hpp"
 #include "video_api.hpp"
 #include "layouts.h"
 #include "video_output.hpp"
@@ -124,6 +113,32 @@ void log_memory() {
   async_log::write("[ROA] images: %s", images::stats().c_str());
 }
 
+// The video layers' lines with a frame summary: upload, upscaling, and the process's CPU.
+void log_videos(GlPresenter& presenter, const std::string& videos) {
+  const std::uint64_t bytes = presenter.video().take_upload_bytes();
+  const std::uint32_t us = presenter.video().take_upload_us();
+  // The whole process's CPU time since the last line, as cores busy: decoding threads included.
+  static std::int64_t cpu_before = 0, wall_before = 0;
+  rusage usage{};
+  getrusage(RUSAGE_SELF, &usage);
+  const std::int64_t cpu_us = (usage.ru_utime.tv_sec + usage.ru_stime.tv_sec) * std::int64_t{1000000} +
+                              usage.ru_utime.tv_usec + usage.ru_stime.tv_usec;
+  const std::int64_t wall_us = hui::sys::monotonic_us();
+  const double cores = wall_before && wall_us > wall_before ? double(cpu_us - cpu_before) / (wall_us - wall_before) : 0;
+  cpu_before = cpu_us;
+  wall_before = wall_us;
+  async_log::write("[ROA] video upload %.1f MiB in %.1f ms, process cpu %.2f cores", bytes / 1048576.0, us / 1000.0, cores);
+  if (const std::string upscale = presenter.video().take_upscale_log(); !upscale.empty())
+    async_log::write("[ROA] video upscale %s", upscale.c_str());
+  std::size_t start = 0;
+  while (start < videos.size()) {
+    const std::size_t end = videos.find('\n', start);
+    async_log::write("[ROA] %s", videos.substr(start, end - start).c_str());
+    if (end == std::string::npos) break;
+    start = end + 1;
+  }
+}
+
 // A frozen screen on a tester's console says where the render loop hangs: past three seconds without
 // a turn, the log names the loop's phase, the native call it is in and how far script got meanwhile
 // (QuickJS polls its interrupt handler while it runs, so rising js_ticks with no call is a script loop).
@@ -178,6 +193,21 @@ std::string dev_path(const char* name) {
   return host::resolve_path((std::string("/app0/dev/") + name).c_str(), path, sizeof path) ? path : "";
 }
 
+// A development option: the text of dev/<name>.txt, without its trailing line break, or empty. A test
+// deploy adds the files; a build never has a dev folder.
+std::string dev_option(const char* name) {
+  FILE* file = std::fopen(dev_path((std::string(name) + ".txt").c_str()).c_str(), "rb");
+  if (!file) return "";
+  char text[4096] = {};
+  text[std::fread(text, 1, sizeof text - 1, file)] = '\0';
+  std::fclose(file);
+  std::string value = text;
+  while (!value.empty() && (value.back() == '\n' || value.back() == '\r')) value.pop_back();
+  return value;
+}
+
+std::string dev_shot_path(const char* name) { return dev_path((std::string(name) + ".bmp").c_str()); }
+
 constexpr std::int64_t duration_us = static_cast<std::int64_t>(ROA_TIMEOUT) * 1000000;
 
 void react_log(const char* line) { async_log::write("[REACT] %s", line); }
@@ -190,19 +220,6 @@ const RoaLayout& choose_layout() {
   for (unsigned i = 0; i < roa_layout_count; ++i)
     if (roa_layouts[i].height >= lines) return roa_layouts[i];
   return roa_layouts[roa_layout_count - 1];
-}
-
-// An app folder may carry dev/input-script.txt (InputScript syntax) for unattended profiling; it is
-// never part of a build, only added to a test deploy.
-void load_input_script(InputScript& script) {
-  FILE* file = std::fopen(dev_path("input-script.txt").c_str(), "rb");
-  if (!file) return;
-  char text[4096] = {};
-  text[std::fread(text, 1, sizeof text - 1, file)] = '\0';
-  std::fclose(file);
-  char error[160];
-  if (script.parse(text, error, sizeof error)) async_log::write("[ROA] input script loaded");
-  else async_log::write("[ROA] input script ignored: %s", error);
 }
 
 // Live commands for a running title: a test machine overwrites dev/commands.txt with lines
@@ -298,42 +315,22 @@ const char* nav_action(hui::Direction direction) {
   }
 }
 
-GcScheduler gc_scheduler(hui::sys::monotonic_us);
-JsProfiler profiler(hui::sys::monotonic_us);
+void log_line(const char* line) { async_log::write("%s", line); }
 
-// Calls the runtime's input entry `name` with `argc` arguments, which it frees.
-bool call_input(const char* name, int argc, JSValue* argv) {
-  gc_scheduler.input(hui::sys::monotonic_us());
-  er_perf_phase_begin(ER_PERF_PHASE_JS);
-  JSContext* ctx = er_runtime_context();
-  JSValue global = JS_GetGlobalObject(ctx);
-  JSValue fn = JS_GetPropertyStr(ctx, global, name);
-  JSValue result = JS_Call(ctx, fn, global, argc, argv);
-  const bool ok = !JS_IsException(result);
-  if (!ok) {
-    JSValue error = JS_GetException(ctx);
-    const char* message = JS_ToCString(ctx, error);
-    async_log::write("[ROA] input exception: %s", message ? message : "unknown");
-    if (message) JS_FreeCString(ctx, message);
-    JS_FreeValue(ctx, error);
-  }
-  JS_FreeValue(ctx, result);
-  for (int i = 0; i < argc; ++i) JS_FreeValue(ctx, argv[i]);
-  JS_FreeValue(ctx, fn); JS_FreeValue(ctx, global);
-  er_perf_phase_end(ER_PERF_PHASE_JS);
-  return ok;
-}
-
-bool dispatch(const char* action) {
-  JSValue value = JS_NewString(er_runtime_context(), action);
-  return call_input("__roaDispatch", 1, &value);
-}
-
-// The touchpad's finger at (x, y) 0..1, or lifted.
-bool touch(bool down, float x, float y) {
-  JSContext* ctx = er_runtime_context();
-  JSValue args[2] = {down ? JS_NewFloat64(ctx, x) : JS_NULL, down ? JS_NewFloat64(ctx, y) : JS_NULL};
-  return call_input("__roaTouch", 2, args);
+HostCore::Config core_config(const RoaLayout& layout) {
+  HostCore::Config config;
+  config.width = layout.width;
+  config.height = layout.height;
+  config.clock_us = hui::sys::monotonic_us;
+  config.log = log_line;
+  config.option = dev_option;
+  config.shot_path = dev_shot_path;
+  config.react_log = react_log;
+  config.phase = beat;
+  config.gpu_by_default = true;
+  // With the memory line instead (log_memory).
+  config.log_image_stats = false;
+  return config;
 }
 
 // Display.setRefreshRate: the rate can change only while EGL is terminated (ps5_opengl_display_modes.h),
@@ -357,18 +354,18 @@ bool run_proof() {
   hui::ps5::Display display;
   hui::ps5::Pad pad;
   GlPresenter presenter;
-  // Draws the UI with OpenGL (gpu_renderer.hpp) instead of the render workers' software rasterizer.
-  GpuRenderer gpu;
   hui::InputTracker tracker;
   hui::PadSample samples[64];
-  FrameStats stats;
   unsigned summaries = 0;
-  bool runtime = false, software = false;
+  bool runtime = false;
   // Accepted only before Display::open initializes EGL. A display without 120 Hz stays at 60.
   if (ROA_REFRESH_RATE != 60 && !eglSetDisplayRefreshPS5(eglGetDisplay(EGL_DEFAULT_DISPLAY), ROA_REFRESH_RATE))
     async_log::write("[ROA] refresh %d Hz refused: 0x%x", ROA_REFRESH_RATE, eglGetError());
   const RoaLayout& layout = choose_layout();
   const int width = layout.width, height = layout.height;
+  // The engine, its services and the frame steps every host shares; the GPU renderer draws the UI unless
+  // a test deploy's dev/gpu.txt holds 0 (2 also times the GPU's work).
+  HostCore core(core_config(layout));
   bool ok = display.open(layout.surface_width, layout.surface_height);
   async_log::write("[ROA] display=%d at %lldms", ok, since_launch_ms());
   if (ok) {
@@ -376,62 +373,15 @@ bool run_proof() {
     async_log::write("[ROA] presenter=%d", ok);
   }
   if (ok) {
-    software = er_software_backend_init(width, height);
-    ok = software && damage_tracker_install(width, height);
-    // The presenter draws qualifying <Image layer> images itself (er_set_layers_enabled). A test deploy may
-    // rasterize them all with a dev/layers.txt holding 0, for comparisons.
-    bool layers = true;
-    if (FILE* file = std::fopen(dev_path("layers.txt").c_str(), "rb")) {
-      char text[16] = {};
-      layers = !std::fgets(text, sizeof text, file) || std::atoi(text) != 0;
-      std::fclose(file);
-    }
-    er_set_layers_enabled(ok && layers && presenter.layers_supported());
     // A test deploy may upload video as textures instead of storage buffers with dev/video-upload.txt "textures".
-    if (FILE* file = std::fopen(dev_path("video-upload.txt").c_str(), "rb")) {
-      char text[16] = {};
-      if (std::fgets(text, sizeof text, file) && !std::strncmp(text, "textures", 8)) presenter.set_video_upload(false);
-      std::fclose(file);
-    }
-    // A test deploy may dump the upscaler's input and output at its Nth frame with dev/upscale-dump.txt "N".
-    if (FILE* file = std::fopen(dev_path("upscale-dump.txt").c_str(), "rb")) {
-      char text[16] = {};
-      if (std::fgets(text, sizeof text, file) && std::atoi(text) > 0)
-        presenter.video().dump_upscale_at(dev_path("upscale"), std::uint64_t(std::atoi(text)));
-      std::fclose(file);
-    }
+    if (dev_option("video-upload") == "textures") presenter.set_video_upload(false);
+    // And dump the upscaler's input and output at its Nth frame with dev/upscale-dump.txt "N".
+    if (const int frame = std::atoi(dev_option("upscale-dump").c_str()); frame > 0)
+      presenter.video().dump_upscale_at(dev_path("upscale"), std::uint64_t(frame));
     async_log::write("[ROA] video upload=%s",
                      presenter.video().upload_mode() == GlVideo::Upload::storage ? "storage" : "textures");
+    ok = core.start_engine(presenter);
     async_log::write("[ROA] software framebuffer=%d %dx%d", ok, width, height);
-  }
-  if (ok) {
-    // A test deploy may pick the count with dev/render-workers.txt (1 renders single-core).
-    const int cpus = render_workers::available_cpus();
-    int wanted = cpus;
-    if (FILE* file = std::fopen(dev_path("render-workers.txt").c_str(), "rb")) {
-      char text[16] = {};
-      if (std::fgets(text, sizeof text, file) && std::atoi(text) > 0) wanted = std::atoi(text);
-      std::fclose(file);
-    }
-    // The GPU draws the UI unless a test deploy asks for the software rasterizer with a dev/gpu.txt
-    // holding 0, for comparisons, or 2 to time the GPU's work. It needs the drawing ops in order: one
-    // worker records them.
-    int gpu_flag = 1;
-    if (FILE* file = std::fopen(dev_path("gpu.txt").c_str(), "rb")) {
-      char text[16] = {};
-      if (std::fgets(text, sizeof text, file)) gpu_flag = std::atoi(text);
-      std::fclose(file);
-    }
-    bool gpu_drawing = gpu_flag != 0;
-    gpu.set_sync(gpu_flag == 2);
-    GpuRenderer::set_log([](const char* line) { async_log::write("%s", line); });
-    if (gpu_drawing && !gpu.start(width, height, GpuRenderer::Mode::draw)) {
-      async_log::write("[ROA] gpu renderer could not start: drawing in software");
-      gpu.stop();
-      gpu_drawing = false;
-    }
-    async_log::write("[ROA] render workers=%d of %d, cpus=%d, %s", render_workers::start(gpu_drawing ? 1 : wanted),
-                     render_workers::max_workers(), cpus, gpu_drawing ? "gpu" : "software");
   }
   // The pad opens before the bundle runs: it also initializes the user service
   // that the users, notification and browser calls need.
@@ -448,34 +398,19 @@ bool run_proof() {
       hui_heap_capacity(&heap.size, nullptr, nullptr);
       return heap;
     });
-    if (network::start()) roa_start_images();
-    async_log::write("[ROA] sound=%d at %lldms", roa_start_sound(), since_launch_ms());
-    ErRuntimeConfig config = {};
-    config.screen_width = width; config.screen_height = height;
-    config.screen_scale = 2;
-    config.log = react_log;
-    config.max_stack_size = 1024 * 1024;
-    config.memory_limit = kJsMemoryLimit;
-    config.malloc_functions = js_heap_functions();
-    config.install_host_globals = roa_install_host_api;
-    runtime = er_runtime_init(&config);
-    ok = runtime;
+    ok = runtime = core.start_runtime();
     async_log::write("[ROA] runtime=%d at %lldms", ok, since_launch_ms());
     // A test deploy samples JavaScript with dev/profile.txt holding the interval in microseconds.
-    if (FILE* file = ok ? std::fopen(dev_path("profile.txt").c_str(), "rb") : nullptr) {
-      char text[16] = {};
-      const int interval = std::fgets(text, sizeof text, file) ? std::atoi(text) : 0;
-      std::fclose(file);
-      profiler.start(JS_GetRuntime(er_runtime_context()), interval > 0 ? interval : 1000);
+    if (const std::string profile = ok ? dev_option("profile") : ""; !profile.empty()) {
+      const int interval = std::atoi(profile.c_str());
+      core.profiler.start(JS_GetRuntime(er_runtime_context()), interval > 0 ? interval : 1000);
       async_log::write("[ROA] profiling JavaScript every %d us", interval > 0 ? interval : 1000);
     }
   }
   if (ok) {
-    layout.register_assets();
     char fonts[256];
-    if (host::resolve_path("/app0/fonts", fonts, sizeof fonts))
-      text_shaper::install(fonts, [](const char* line) { async_log::write("[ROA] %s", line); });
-    ok = er_runtime_load_source(layout.bundle, layout.bundle_length, "app.jsx.bundle");
+    if (!host::resolve_path("/app0/fonts", fonts, sizeof fonts)) fonts[0] = '\0';
+    ok = core.load(layout.register_assets, fonts, layout.bundle, layout.bundle_length, "app.jsx.bundle");
     async_log::write("[ROA] bundle=%d gc_accounting=%d at %lldms", ok, er_runtime_gc_accounting_ok(), since_launch_ms());
   }
   if (ok) {
@@ -485,12 +420,8 @@ bool run_proof() {
     // Replaced by the accepted mode after the first frame at a rate: a display without 120 Hz stays at 60.
     int refresh_hz = ROA_REFRESH_RATE;
     bool mode_known = false;
-    double tick_carry_ms = 0;
     std::uint64_t frames = 0;
-    InputScript script;
-    load_input_script(script);
     bool touched = false;
-    VirtualPad virtual_pad;
     LiveCommands commands;
     commands.start();
     beat("start");
@@ -498,168 +429,62 @@ bool run_proof() {
                            [](JSRuntime*, void*) { js_ticks.fetch_add(1, std::memory_order_relaxed); return 0; }, nullptr);
     pthread_t watcher;
     const bool watcher_started = pthread_create(&watcher, nullptr, watch_loop, nullptr) == 0;
-    // A test deploy may lower the slow-frame threshold (milliseconds) with dev/slow-frame-ms.txt.
-    std::uint32_t slow_frame_us = 33000;
-    if (FILE* file = std::fopen(dev_path("slow-frame-ms.txt").c_str(), "rb")) {
-      char text[16] = {};
-      if (std::fgets(text, sizeof text, file) && std::atoi(text) > 0) slow_frame_us = std::atoi(text) * 1000u;
-      std::fclose(file);
-    }
-    // And report every slow frame instead of the first few per window, with dev/slow-frame-lines.txt.
-    if (FILE* file = std::fopen(dev_path("slow-frame-lines.txt").c_str(), "rb")) {
-      char text[16] = {};
-      if (std::fgets(text, sizeof text, file) && std::atoi(text) > 0) stats.set_slow_line_limit(std::atoi(text));
-      std::fclose(file);
-    }
     tsc_per_us = std::max<std::uint64_t>(sceKernelGetTscFrequency() / 1000000, 1);
     er_perf_set_clock(perf_clock);
-    // A test deploy may let idle collections run during motion with a dev/gc-still.txt holding 0.
-    if (FILE* file = std::fopen(dev_path("gc-still.txt").c_str(), "rb")) {
-      char text[16] = {};
-      if (std::fgets(text, sizeof text, file)) gc_scheduler.wait_for_still(std::atoi(text) != 0);
-      std::fclose(file);
-    }
     while (ok) {
       const std::int64_t now = hui::sys::monotonic_us();
-      beat("input");
       if (now <= 0 || (duration_us > 0 && first_present && now - first_present >= duration_us)) break;
-      if (const char* line = stats.start_frame(now)) {
-        async_log::write("[ROA] %s", line);
+      if (core.begin_frame()) {
         // Every fifth summary, about ten seconds apart.
         if (++summaries % 5 == 1) log_memory();
-        if (const std::string videos = video_layers::summary(); !videos.empty()) {
-          const std::uint64_t bytes = presenter.video().take_upload_bytes();
-          const std::uint32_t us = presenter.video().take_upload_us();
-          // The whole process's CPU time since the last line, as cores busy: decoding threads included.
-          static std::int64_t cpu_before = 0, wall_before = 0;
-          rusage usage{};
-          getrusage(RUSAGE_SELF, &usage);
-          const std::int64_t cpu_us = (usage.ru_utime.tv_sec + usage.ru_stime.tv_sec) * std::int64_t{1000000} +
-                                      usage.ru_utime.tv_usec + usage.ru_stime.tv_usec;
-          const std::int64_t wall_us = hui::sys::monotonic_us();
-          const double cores = wall_before && wall_us > wall_before ? double(cpu_us - cpu_before) / (wall_us - wall_before) : 0;
-          cpu_before = cpu_us;
-          wall_before = wall_us;
-          async_log::write("[ROA] video upload %.1f MiB in %.1f ms, process cpu %.2f cores", bytes / 1048576.0,
-                           us / 1000.0, cores);
-          if (const std::string upscale = presenter.video().take_upscale_log(); !upscale.empty())
-            async_log::write("[ROA] video upscale %s", upscale.c_str());
-          std::size_t start = 0;
-          while (start < videos.size()) {
-            const std::size_t end = videos.find('\n', start);
-            async_log::write("[ROA] %s", videos.substr(start, end - start).c_str());
-            if (end == std::string::npos) break;
-            start = end + 1;
-          }
-        }
+        if (const std::string videos = video_layers::summary(); !videos.empty()) log_videos(presenter, videos);
       }
-      // Input and JavaScript commit layout only; the commit after them paints the frame once.
-      er_set_raster_deferred(true);
       const auto count = pad.read(samples);
       const auto input = tracker.update(std::span<const hui::PadSample>(samples, count), now);
       pad.tick(static_cast<float>(now - previous) / 1000000.0f);
       host_platform_tick(now);
-      if (const char* direction = nav_action(input.nav)) ok = dispatch(direction);
+      if (const char* direction = nav_action(input.nav)) ok = core.dispatch(direction);
       for (const auto& [button, action] : kExtraActions) {
-        if (ok && input.is_pressed(button)) ok = dispatch(action_name(action));
+        if (ok && input.is_pressed(button)) ok = core.dispatch(action_name(action));
       }
       // Each frame the finger is down, and once when it lifts.
       float touch_x = 0, touch_y = 0;
       const bool touch_down = host_platform_read_touch(&touch_x, &touch_y);
-      if (ok && (touch_down || touched)) ok = touch(touch_down, touch_x, touch_y);
+      if (ok && (touch_down || touched)) ok = core.touch(touch_down, touch_x, touch_y);
       touched = touch_down;
-      commands.poll(now, script);
-      if (const char* action = ok ? script.next(static_cast<std::uint64_t>(now / 1000)) : nullptr) {
-        async_log::write("[ROA] script: %s", action);
-        if (!std::strcmp(action, "quit")) break;
-        if (VirtualPad::is_step(action)) {
-          char error[160];
-          if (!virtual_pad.apply(action, static_cast<std::uint64_t>(now / 1000), error, sizeof error))
-            async_log::write("[ROA] script: %s", error);
-        } else if (!std::strncmp(action, "shot:", 5)) {
-          const std::string path = dev_path((std::string(action + 5) + ".bmp").c_str());
-          const bool saved = gpu.drawing() ? gpu.save_screen(presenter, path) : save_screenshot(path.c_str());
-          async_log::write("[ROA] shot %s: %s", path.c_str(), saved ? "saved" : std::strerror(errno));
-        } else if (!std::strncmp(action, "touch:", 6)) {
-          float x = 0, y = 0;
-          ok = touch(std::sscanf(action + 6, "%f,%f", &x, &y) == 2, x, y);
-        } else {
-          ok = dispatch(action);
-        }
-      }
-      GamepadState state = gamepad_state(input);
-      // A scripted hold presses like the controller: the button's action, once.
-      for (std::uint32_t pressed = virtual_pad.merge(state, static_cast<std::uint64_t>(now / 1000)), i = 0; ok && pressed;
-           pressed >>= 1, ++i) {
-        if (const char* held = pressed & 1 ? VirtualPad::action(i) : nullptr) ok = dispatch(held);
-      }
-      roa_set_gamepad(state);
+      commands.poll(now, core.script);
+      const auto now_ms = static_cast<std::uint64_t>(now / 1000);
+      ok = ok && core.play_script(now_ms);
+      if (core.quit_requested()) break;
+      ok = ok && core.deliver_pad(gamepad_state(input), now_ms);
       if (!ok) break;
-      stats.lap(FrameStats::input, hui::sys::monotonic_us());
-      er_perf_phase_begin(ER_PERF_PHASE_JS);
-      beat("js");
-      er_runtime_pump();
       // The display shows a new frame every vblank, so motion advances by whole vblanks, not by the
       // loop's jittery wall-clock interval.
       const std::int64_t vblank_us = 1000000 / refresh_hz;
       const std::int64_t vblanks = std::max<std::int64_t>(1, (now - previous + vblank_us / 2) / vblank_us);
-      const double elapsed_ms = vblanks * 1000.0 / refresh_hz;
-      ok = roa_frame(er_runtime_context(), elapsed_ms);
-      er_perf_phase_end(ER_PERF_PHASE_JS);
-      if (!ok) {
-        async_log::write("[ROA] frame callback exception");
+      if (!core.advance(vblanks * 1000.0 / refresh_hz)) {
+        ok = false;
         break;
       }
-      er_set_raster_deferred(false);
-      beat("commit");
-      er_commit();
-      if (*er_runtime_last_error()) { ok = false; break; }
-      const bool redrawn = gpu.active() && gpu.replay();
-      stats.lap(FrameStats::update, hui::sys::monotonic_us());
-      er_perf_phase_begin(ER_PERF_PHASE_PRESENT);
-      beat("present");
-      int layer_count = 0;
-      const ERLayer* layers = er_get_layers(&layer_count);
-      presenter.set_layers({layers, static_cast<std::size_t>(layer_count)});
-      video_layers::update(hui::sys::monotonic_us(), 1000000 / refresh_hz);
       // A frame that changed nothing is not presented: the screen keeps showing the last one, and the
       // loop sleeps to the next vblank instead of waiting in the driver, which costs CPU.
-      const bool still = first_present && !redrawn &&
-                         presenter.unchanged(damage_tracker_rects(), damage_tracker_moves(), display.width(), display.height());
-      if (!still)
-        ok = gpu.drawing() ? presenter.draw_texture(gpu.texture(), display.width(), display.height())
-                           : presenter.draw(er_software_framebuffer(), damage_tracker_rects(), damage_tracker_moves(),
-                                            display.width(), display.height());
-      er_perf_phase_end(ER_PERF_PHASE_PRESENT);
-      {
-        const GlPresenter::Timing& t = presenter.last_timing();
-        stats.note_present(t.upload_us, t.draw_us, t.upload_bytes);
-      }
-      const std::size_t repainted = damage_tracker_area();
-      damage_tracker_clear();
-      stats.lap(FrameStats::present, hui::sys::monotonic_us());
-      beat("swap");
-      if (still) {
-        const std::int64_t wake = last_vblank_us + (hui::sys::monotonic_us() - last_vblank_us + 1000000 / refresh_hz) /
-                                                       (1000000 / refresh_hz) * (1000000 / refresh_hz);
+      const HostCore::Presented presented = core.present(display.width(), display.height(), vblank_us, first_present != 0);
+      ok = presented.ok;
+      if (presented.still) {
+        const std::int64_t wake = last_vblank_us + (hui::sys::monotonic_us() - last_vblank_us + vblank_us) / vblank_us * vblank_us;
         const std::int64_t left = wake - hui::sys::monotonic_us();
         if (left > 0) usleep(static_cast<useconds_t>(left));
       } else {
         ok = ok && display.swap();
         last_vblank_us = hui::sys::monotonic_us();
       }
-      stats.lap(FrameStats::swap, hui::sys::monotonic_us());
       if (!ok) break;
-      beat("gc");
-      if (const char* line = gc_scheduler.frame(JS_GetRuntime(er_runtime_context()), hui::sys::monotonic_us(),
-                                                repainted, static_cast<std::size_t>(width) * height))
-        async_log::write("[ROA] %s", line);
+      core.end_frame();
       if (!first_present) {
         first_present = hui::sys::monotonic_us();
         hui::sys::hide_splash_screen();
         async_log::write("[ROA] first frame presented at %lldms", since_launch_ms());
       }
-      beat("embedded");
       const bool first_at_mode = !mode_known;
       if (first_at_mode) {
         // The accepted mode is known only once a frame has been presented.
@@ -671,18 +496,12 @@ bool run_proof() {
         }
         roa_set_refresh_rate(refresh_hz);
       }
-      // The engine clock takes whole milliseconds; carrying the remainder keeps 8.33 ms frames at speed.
-      tick_carry_ms += std::min(elapsed_ms, 50.0);
-      const auto tick_ms = static_cast<std::uint32_t>(tick_carry_ms);
-      tick_carry_ms -= tick_ms;
-      embedded_renderer_tick(tick_ms);
       previous = now;
       // The first frame at a mode may wait out the TV's resync in its swap; that wait is not motion.
       if (first_at_mode) previous = hui::sys::monotonic_us();
       ++frames;
-      if (const char* line = stats.end_frame(slow_frame_us)) async_log::write("[ROA] %s", line);
       if (roa_exit_requested()) break;
-      if (const int hz = roa_take_refresh_request(); hz && gpu.drawing()) {
+      if (const int hz = roa_take_refresh_request(); hz && core.gpu.drawing()) {
         // Reopening EGL would lose the GPU renderer's picture, and the engine repaints only what changes.
         async_log::write("[ROA] refresh %d Hz: not while the GPU renderer draws; set it in app.json", hz);
       } else if (hz) {
@@ -696,27 +515,14 @@ bool run_proof() {
     async_log::write("[ROA] loop ended ok=%d frames=%llu", ok, static_cast<unsigned long long>(frames));
     watching = false;
     if (watcher_started) pthread_join(watcher, nullptr);
-    if (profiler.running()) {
-      profiler.stop();
-      const bool saved = profiler.write(dev_path("profile.folded").c_str());
-      async_log::write("[ROA] profile: %llu samples, saved=%d", static_cast<unsigned long long>(profiler.samples()), saved);
+    if (core.profiler.running()) {
+      core.profiler.stop();
+      const bool saved = core.profiler.write(dev_path("profile.folded").c_str());
+      async_log::write("[ROA] profile: %llu samples, saved=%d", static_cast<unsigned long long>(core.profiler.samples()), saved);
     }
   }
   if (!ok && runtime) async_log::write("[ROA] error=%s", er_runtime_last_error());
-  video_layers::stop();
-  roa_stop_images();
-  archives::stop();
-  browser_capture::stop();
-  lan::stop();
-  packages::stop();
-  removals::stop();
-  network::stop();
-  if (runtime) er_runtime_shutdown();
-  text_shaper::shutdown();
-  roa_stop_sound();
-  gpu.stop();
-  render_workers::stop();
-  if (software) er_software_backend_destroy();
+  core.stop();
   host_platform_set_pad(nullptr);
   pad.close();
   presenter.release();

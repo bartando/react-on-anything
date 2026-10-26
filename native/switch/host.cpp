@@ -13,13 +13,6 @@
 // and sdmc:/switch/<app>/options.env, KEY=VALUE lines set in the environment before boot, as on Android.
 // Launched by nxlink, stdout goes back to it.
 #include "host_platform.hpp"
-#include "network.hpp"
-#include "image_loader.hpp"
-#include "archives.hpp"
-#include "packages.hpp"
-#include "removals.hpp"
-#include "browser_capture.hpp"
-#include "lan.hpp"
 #include "gl_api.hpp"
 
 extern "C" {
@@ -31,17 +24,10 @@ void er_register_assets_1920x1080(void);
 void er_register_assets_1280x720(void);
 }
 #include "actions.hpp"
-#include "damage_tracker.hpp"
-#include "frame_stats.hpp"
 #include "gl_presenter.hpp"
-#include "gpu_renderer.hpp"
 #include "host_api.hpp"
-#include "input_script.hpp"
-#include "js_heap.hpp"
-#include "render_workers.hpp"
-#include "screenshot.hpp"
-#include "text_shaper.hpp"
-#include "video_api.hpp"
+#include "host_core.hpp"
+#include "pad_input.hpp"
 
 #include <netinet/in.h> // nxlink.h's in_addr
 #include <switch.h>
@@ -51,14 +37,11 @@ void er_register_assets_1280x720(void);
 #include <iterator>
 #include <cerrno>
 #include <climits>
-#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <ctime>
-#include <fstream>
 #include <string>
-#include <vector>
 
 namespace {
 struct Layout {
@@ -88,19 +71,6 @@ std::int64_t now_us() { return static_cast<std::int64_t>(armTicksToNs(armGetSyst
 std::uint64_t now_ms() { return static_cast<std::uint64_t>(now_us() / 1000); }
 std::uint32_t perf_clock() { return static_cast<std::uint32_t>(now_us()); }
 
-// options.env: KEY=VALUE per line, # comments.
-void read_options(const std::string& path) {
-  std::ifstream file(path);
-  for (std::string line; std::getline(file, line);) {
-    if (!line.empty() && line.back() == '\r') line.pop_back();
-    if (line.empty() || line[0] == '#') continue;
-    const std::size_t equals = line.find('=');
-    if (equals == std::string::npos) continue;
-    setenv(line.substr(0, equals).c_str(), line.substr(equals + 1).c_str(), 1);
-    std::printf("[ROA] option %s\n", line.c_str());
-  }
-}
-
 // Controller buttons: the action each dispatches, and its GamepadState button (kButtonNames index).
 // Nintendo's layout: A (right) confirms and B (bottom) goes back; X (top) is Triangle, Y (left) Square.
 // The left stick's directions navigate like the d-pad.
@@ -124,11 +94,17 @@ constexpr int kStickL3 = 12, kStickR3 = 13;
 // Holding + this long quits to the Homebrew Menu, as homebrew apps do; a press is still Options.
 constexpr std::uint64_t kQuitHoldMs = 1000;
 
-float stick(s32 value) {
-  constexpr float deadzone = 0.16f;
-  const float v = std::clamp(value / static_cast<float>(JOYSTICK_MAX), -1.0f, 1.0f);
-  if (std::abs(v) < deadzone) return 0;
-  return std::copysign((std::abs(v) - deadzone) / (1 - deadzone), v);
+void log_line(const char* line) { std::printf("%s\n", line); }
+
+HostCore::Config core_config() {
+  HostCore::Config config;
+  config.width = width;
+  config.height = height;
+  config.clock_us = now_us;
+  config.log = log_line;
+  config.option = HostCore::env_option;
+  config.gpu_by_default = true;
+  return config;
 }
 
 struct Host {
@@ -136,48 +112,22 @@ struct Host {
   EGLContext context = EGL_NO_CONTEXT;
   EGLSurface surface = EGL_NO_SURFACE;
   GlPresenter presenter;
-  GpuRenderer gpu;
-  FrameStats stats;
-  GcScheduler gc_scheduler{now_us};
-  InputScript script;
-  VirtualPad virtual_pad;
+  HostCore core{core_config()};
   PadState pad_state{};
   struct Boosted {
     ClkrstSession session{};
     u32 before = 0; // restored on exit; 0 when the clock was not changed
   } boosted[std::size(kBoost)];
   bool clkrst = false;
-  bool running = true, runtime_started = false, backend_started = false;
-  int render_worker_count = 1;
-  std::int64_t previous_step_us = 0;
-  std::uint64_t next_image_stats = 0;
-  std::string image_stats;
-  std::uint32_t slow_frame_us = 33000;
+  bool running = true;
   u64 buttons_held = 0;
-  // A held direction repeats after 350 ms, every 110 ms, as on the desktop.
-  int held_button = -1;
-  const char* held_action = nullptr;
-  u64 held_mask = 0;
-  std::uint64_t next_repeat = 0;
+  Repeater repeater; // its sources are kButtons indexes
   std::uint64_t plus_down_ms = 0;
   bool finger_down = false;
   float finger_x = 0, finger_y = 0;
 
   ~Host() {
-    gpu.stop();
-    roa_stop_images();
-    archives::stop();
-    browser_capture::stop();
-    lan::stop();
-    packages::stop();
-    removals::stop();
-    network::stop();
-    video_layers::stop();
-    if (runtime_started) er_runtime_shutdown();
-    text_shaper::shutdown();
-    roa_stop_sound();
-    render_workers::stop();
-    if (backend_started) er_software_backend_destroy();
+    core.stop();
     presenter.release();
     if (display != EGL_NO_DISPLAY) {
       eglMakeCurrent(display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
@@ -237,85 +187,8 @@ struct Host {
   bool boot() {
     std::printf("GL %s / %s\n", glGetString(GL_VERSION), glGetString(GL_RENDERER));
     er_perf_set_clock(perf_clock);
-    if (!presenter.init(width, height)) return false;
-    backend_started = er_software_backend_init(width, height);
-    if (!backend_started || !damage_tracker_install(width, height)) return false;
-    er_set_layers_enabled(presenter.layers_supported());
-    // The GPU draws unless ROA_GPU=0; it needs the ops in drawing order, from one worker.
-    const char* gpu_option = std::getenv("ROA_GPU");
-    const bool gpu_drawing = !gpu_option || std::strcmp(gpu_option, "0") != 0;
-    render_worker_count = render_workers::start(gpu_drawing ? 1 : render_workers::available_cpus());
-    std::printf("[ROA] render workers=%d, %s\n", render_worker_count, gpu_drawing ? "gpu" : "software");
-    if (gpu_drawing && !gpu.start(width, height, GpuRenderer::Mode::draw))
-      std::fprintf(stderr, "[ROA] gpu renderer: could not start\n");
-    if (network::start()) roa_start_images();
-    roa_start_sound();
-    ErRuntimeConfig cfg = {};
-    cfg.screen_width = width; cfg.screen_height = height; cfg.screen_scale = 2;
-    cfg.memory_limit = kJsMemoryLimit;
-    cfg.malloc_functions = js_heap_functions();
-    cfg.max_stack_size = 1024 * 1024;
-    cfg.install_host_globals = roa_install_host_api;
-    runtime_started = er_runtime_init(&cfg);
-    if (!runtime_started) return false;
-    layout.register_assets();
-    text_shaper::install("romfs:/fonts", [](const char* line) { std::printf("[ROA] %s\n", line); });
-    const char* path = layout.bundle;
-    FILE* file = std::fopen(path, "rb");
-    if (!file) {
-      std::fprintf(stderr, "[ROA] no bundle at %s: %s\n", path, std::strerror(errno));
-      return false;
-    }
-    std::fseek(file, 0, SEEK_END);
-    const long size = std::ftell(file);
-    std::fseek(file, 0, SEEK_SET);
-    // QuickJS's source parser requires a trailing NUL beyond the supplied length.
-    std::vector<char> source(static_cast<std::size_t>(std::max(size, 0L)) + 1, '\0');
-    const bool read = size >= 0 && std::fread(source.data(), 1, static_cast<std::size_t>(size), file) ==
-                                       static_cast<std::size_t>(size);
-    std::fclose(file);
-    if (!read || !er_runtime_load_source(source.data(), static_cast<std::size_t>(size), path)) return false;
-    if (const char* text = std::getenv("ROA_INPUT_SCRIPT")) {
-      char error[160];
-      if (!script.parse(text, error, sizeof error)) std::fprintf(stderr, "ROA_INPUT_SCRIPT: %s\n", error);
-    }
-    previous_step_us = now_us();
-    return true;
-  }
-
-  bool call_input(const char* name, int argc, JSValue* argv) {
-    gc_scheduler.input(now_us());
-    er_perf_phase_begin(ER_PERF_PHASE_JS);
-    JSContext* ctx = er_runtime_context();
-    JSValue global = JS_GetGlobalObject(ctx);
-    JSValue fn = JS_GetPropertyStr(ctx, global, name);
-    JSValue result = JS_Call(ctx, fn, global, argc, argv);
-    const bool ok = !JS_IsException(result);
-    if (!ok) {
-      JSValue error = JS_GetException(ctx);
-      const char* message = JS_ToCString(ctx, error);
-      std::fprintf(stderr, "Input failed: %s\n", message ? message : "JS exception");
-      if (message) JS_FreeCString(ctx, message);
-      JS_FreeValue(ctx, error);
-    }
-    JS_FreeValue(ctx, result);
-    for (int i = 0; i < argc; ++i) JS_FreeValue(ctx, argv[i]);
-    JS_FreeValue(ctx, fn);
-    JS_FreeValue(ctx, global);
-    er_perf_phase_end(ER_PERF_PHASE_JS);
-    return ok;
-  }
-
-  bool dispatch(const char* action) {
-    JSValue arg = JS_NewString(er_runtime_context(), action);
-    return call_input("__roaDispatch", 1, &arg);
-  }
-
-  // The touchscreen's first finger at (x, y) in screen px, or lifted.
-  bool screen_touch(bool down, float x, float y) {
-    JSContext* ctx = er_runtime_context();
-    JSValue args[2] = {down ? JS_NewFloat64(ctx, x) : JS_NULL, down ? JS_NewFloat64(ctx, y) : JS_NULL};
-    return call_input("__roaScreenTouch", 2, args);
+    return presenter.init(width, height) && core.start_engine(presenter) && core.start_runtime() &&
+           core.load_file(layout.register_assets, "romfs:/fonts", layout.bundle);
   }
 
   // The panel reports 1280x720 whatever the layout; a finger is passed on each frame it moves, and once
@@ -326,7 +199,7 @@ struct Host {
     if (!down) {
       if (!finger_down) return true;
       finger_down = false;
-      return screen_touch(false, 0, 0);
+      return core.screen_touch(false, 0, 0);
     }
     const float x = static_cast<float>(state.touches[0].x) * width / 1280.0f;
     const float y = static_cast<float>(state.touches[0].y) * height / 720.0f;
@@ -334,7 +207,7 @@ struct Host {
     finger_down = true;
     finger_x = x;
     finger_y = y;
-    return screen_touch(true, x, y);
+    return core.screen_touch(true, x, y);
   }
 
   // Presses since the last frame, held state for repeats, and the controller for Controller.getState().
@@ -344,18 +217,14 @@ struct Host {
     const u64 pressed = held & ~buttons_held;
     buttons_held = held;
     state.connected = padIsConnected(&pad_state);
-    for (const ButtonBinding& binding : kButtons) {
+    for (std::size_t i = 0; i < std::size(kButtons); ++i) {
+      const ButtonBinding& binding = kButtons[i];
       if (held & binding.mask) state.buttons |= 1u << binding.button;
       if (!(pressed & binding.mask)) continue;
       // Next to the slow-frame lines, so a lag can be traced to what the player pressed.
       std::printf("[ROA] press %s\n", action_name(binding.action));
-      if (!dispatch(action_name(binding.action))) return false;
-      if (repeats(binding.action)) {
-        held_button = binding.button;
-        held_action = action_name(binding.action);
-        held_mask = binding.mask;
-        next_repeat = now_ms() + 350;
-      }
+      if (!core.dispatch(action_name(binding.action))) return false;
+      repeater.press(binding.action, static_cast<int>(i), now_ms());
     }
     if (pressed & HidNpadButton_Plus) plus_down_ms = now_ms();
     if ((held & HidNpadButton_Plus) && now_ms() - plus_down_ms >= kQuitHoldMs) {
@@ -365,106 +234,38 @@ struct Host {
     }
     if (held & HidNpadButton_StickL) state.buttons |= 1u << kStickL3;
     if (held & HidNpadButton_StickR) state.buttons |= 1u << kStickR3;
-    if (held_action && !(held & held_mask)) held_action = nullptr;
-    if (held_action && now_ms() >= next_repeat) {
-      next_repeat = now_ms() + 110;
-      std::printf("[ROA] press %s (held)\n", held_action);
-      if (!dispatch(held_action)) return false;
+    const bool repeating = repeater.holding() && (held & kButtons[repeater.source()].mask);
+    if (const char* action = repeater.due(repeating, now_ms())) {
+      std::printf("[ROA] press %s (held)\n", action);
+      if (!core.dispatch(action)) return false;
     }
     const HidAnalogStickState left = padGetStickPos(&pad_state, 0), right = padGetStickPos(&pad_state, 1);
     // Up is positive on the Switch and negative in GamepadState, as on the other hosts.
-    state.left_x = stick(left.x);
-    state.left_y = -stick(left.y);
-    state.right_x = stick(right.x);
-    state.right_y = -stick(right.y);
+    state.left_x = stick_deadzone(left.x / static_cast<float>(JOYSTICK_MAX));
+    state.left_y = -stick_deadzone(left.y / static_cast<float>(JOYSTICK_MAX));
+    state.right_x = stick_deadzone(right.x / static_cast<float>(JOYSTICK_MAX));
+    state.right_y = -stick_deadzone(right.y / static_cast<float>(JOYSTICK_MAX));
     // The Switch's triggers are digital.
     state.l2 = held & HidNpadButton_ZL ? 1.0f : 0.0f;
     state.r2 = held & HidNpadButton_ZR ? 1.0f : 0.0f;
     return true;
   }
 
-  bool play_script() {
-    const char* action = script.next(now_ms());
-    if (!action) return true;
-    std::printf("[ROA] script: %s\n", action);
-    if (!std::strcmp(action, "quit")) running = false;
-    else if (VirtualPad::is_step(action)) {
-      char error[160];
-      if (!virtual_pad.apply(action, now_ms(), error, sizeof error)) std::fprintf(stderr, "script: %s\n", error);
-    } else if (!std::strncmp(action, "shot:", 5)) {
-      char path[PATH_MAX];
-      const std::string name = std::string("/temp0/") + (action + 5) + ".bmp";
-      // With the GPU drawing, the software framebuffer holds only what it left to the CPU.
-      const bool saved = host::resolve_path(name.c_str(), path, sizeof path) &&
-                         (gpu.drawing() ? gpu.save_screen(presenter, path) : save_screenshot(path));
-      std::printf("[ROA] shot %s: %s\n", path, saved ? "saved" : std::strerror(errno));
-    } else if (!std::strncmp(action, "screen:", 7)) {
-      float x = 0, y = 0;
-      return screen_touch(std::sscanf(action + 7, "%f,%f", &x, &y) == 2, x, y);
-    } else return dispatch(action);
-    return true;
-  }
-
   bool frame() {
-    if (const char* line = stats.start_frame(now_us())) std::printf("[ROA] %s\n", line);
-    er_set_raster_deferred(true);
+    core.begin_frame();
     GamepadState state;
-    if (!read_pad(state) || !read_touch() || !play_script()) return false;
+    if (!read_pad(state) || !read_touch() || !core.play_script(now_ms())) return false;
+    if (core.quit_requested()) running = false;
     if (!running) return true;
-    for (std::uint32_t pressed = virtual_pad.merge(state, now_ms()), i = 0; pressed; pressed >>= 1, ++i) {
-      const char* held = pressed & 1 ? VirtualPad::action(i) : nullptr;
-      if (held && !dispatch(held)) return false;
-    }
-    roa_set_gamepad(state);
-    stats.lap(FrameStats::input, now_us());
-    er_perf_phase_begin(ER_PERF_PHASE_JS);
-    er_runtime_pump();
-    const std::int64_t step_us = now_us();
-    const bool stepped = roa_frame(er_runtime_context(), std::min(50.0, (step_us - previous_step_us) / 1000.0));
-    previous_step_us = step_us;
-    er_perf_phase_end(ER_PERF_PHASE_JS);
-    if (!stepped) {
-      std::fprintf(stderr, "Frame callback failed\n");
-      return false;
-    }
-    er_set_raster_deferred(false);
-    er_commit();
-    if (gpu.active()) gpu.replay();
-    stats.lap(FrameStats::update, now_us());
+    if (!core.deliver_pad(state, now_ms()) || !core.advance(core.wall_elapsed_ms())) return false;
     if (roa_exit_requested()) {
       running = false;
       return true;
     }
-    const std::size_t repainted = damage_tracker_area();
-    er_perf_phase_begin(ER_PERF_PHASE_PRESENT);
-    int layer_count = 0;
-    const ERLayer* layers = er_get_layers(&layer_count);
-    presenter.set_layers({layers, static_cast<std::size_t>(layer_count)});
-    video_layers::update(now_us(), 16667);
     // The swap chain's buffers rotate: every frame draws the whole screen.
-    const bool drawn = gpu.drawing() ? presenter.draw_texture(gpu.texture(), width, height)
-                                     : presenter.draw(er_software_framebuffer(), damage_tracker_rects(),
-                                                      damage_tracker_moves(), width, height);
-    if (!drawn) return false;
-    er_perf_phase_end(ER_PERF_PHASE_PRESENT);
-    const GlPresenter::Timing& t = presenter.last_timing();
-    stats.note_present(t.upload_us, t.draw_us, t.upload_bytes);
-    damage_tracker_clear();
-    stats.lap(FrameStats::present, now_us());
+    if (!core.present(width, height, 16667, false).ok) return false;
     eglSwapBuffers(display, surface);
-    stats.lap(FrameStats::swap, now_us());
-    if (const char* line = gc_scheduler.frame(JS_GetRuntime(er_runtime_context()), now_us(), repainted,
-                                              static_cast<std::size_t>(width) * height))
-      std::printf("[ROA] %s\n", line);
-    embedded_renderer_tick(16);
-    if (const char* line = stats.end_frame(slow_frame_us)) std::printf("[ROA] %s\n", line);
-    if (now_ms() >= next_image_stats) {
-      next_image_stats = now_ms() + 2000;
-      if (std::string line = images::stats(); line != image_stats) {
-        std::printf("[ROA] images: %s\n", line.c_str());
-        image_stats = std::move(line);
-      }
-    }
+    core.end_frame();
     return !*er_runtime_last_error();
   }
 };
@@ -485,7 +286,7 @@ int main(int, char**) {
   for (const std::string& dir : {data, sandbox, sandbox + "/app0", sandbox + "/download0", sandbox + "/temp0"})
     mkdir(dir.c_str(), 0755);
   switch_set_root(sandbox.c_str());
-  read_options(data + "/options.env");
+  HostCore::load_env_file((data + "/options.env").c_str(), log_line);
   // ROA_LAYOUT=720 or 1080 picks one whatever the screen.
   const bool docked = appletGetOperationMode() == AppletOperationMode_Console;
   const char* forced = std::getenv("ROA_LAYOUT");

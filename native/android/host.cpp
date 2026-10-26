@@ -15,10 +15,6 @@
 #include "network.hpp"
 #include "image_loader.hpp"
 #include "archives.hpp"
-#include "packages.hpp"
-#include "removals.hpp"
-#include "browser_capture.hpp"
-#include "lan.hpp"
 #include "gl_api.hpp"
 
 extern "C" {
@@ -29,16 +25,10 @@ extern "C" {
 void er_register_assets(void);
 }
 #include "actions.hpp"
-#include "damage_tracker.hpp"
-#include "frame_stats.hpp"
 #include "gl_presenter.hpp"
-#include "gpu_renderer.hpp"
 #include "host_api.hpp"
-#include "input_script.hpp"
-#include "js_heap.hpp"
-#include "render_workers.hpp"
-#include "screenshot.hpp"
-#include "text_shaper.hpp"
+#include "host_core.hpp"
+#include "pad_input.hpp"
 #include "video_api.hpp"
 
 #include <EGL/egl.h>
@@ -106,18 +96,6 @@ bool gather_certificates(const std::string& out) {
   return static_cast<bool>(bundle);
 }
 
-// options.env: KEY=VALUE per line, # comments.
-void read_options(const std::string& path) {
-  std::ifstream file(path);
-  for (std::string line; std::getline(file, line);) {
-    if (line.empty() || line[0] == '#') continue;
-    const std::size_t equals = line.find('=');
-    if (equals == std::string::npos) continue;
-    setenv(line.substr(0, equals).c_str(), line.substr(equals + 1).c_str(), 1);
-    std::printf("[ROA] option %s\n", line.c_str());
-  }
-}
-
 std::string property(const char* name) {
   char value[PROP_VALUE_MAX] = "";
   __system_property_get(name, value);
@@ -151,10 +129,20 @@ constexpr std::uint64_t kLongPressMs = 500;
 bool remote_ok(int32_t key) { return key == AKEYCODE_DPAD_CENTER || key == AKEYCODE_ENTER; }
 
 float stick(const AInputEvent* event, int32_t axis) {
-  constexpr float deadzone = 0.16f;
-  const float value = std::clamp(AMotionEvent_getAxisValue(event, axis, 0), -1.0f, 1.0f);
-  if (std::abs(value) < deadzone) return 0;
-  return std::copysign((std::abs(value) - deadzone) / (1 - deadzone), value);
+  return stick_deadzone(AMotionEvent_getAxisValue(event, axis, 0));
+}
+
+void log_line(const char* line) { std::printf("%s\n", line); }
+
+HostCore::Config core_config() {
+  HostCore::Config config;
+  config.width = width;
+  config.height = height;
+  config.clock_us = now_us;
+  config.log = log_line;
+  config.option = HostCore::env_option;
+  config.gpu_by_default = true;
+  return config;
 }
 
 struct Host {
@@ -164,52 +152,27 @@ struct Host {
   EGLContext context = EGL_NO_CONTEXT;
   EGLSurface surface = EGL_NO_SURFACE;
   GlPresenter presenter;
-  GpuRenderer gpu;
-  FrameStats stats;
-  GcScheduler gc_scheduler{now_us};
+  HostCore core{core_config()};
   // The render thread stops for a collection (about 200ms on the Shield): the videos keep playing.
   static int video_during_collection(std::int64_t now) {
     video_layers::advance(now, 16667);
     return video::refresh_layers();
   }
-  InputScript script;
-  VirtualPad virtual_pad;
   std::string files;
-  bool running = true, booted = false, runtime_started = false, backend_started = false, presenter_started = false;
+  bool running = true, booted = false;
   bool exposed = true;
-  int render_worker_count = 1;
-  std::int64_t previous_step_us = 0;
-  std::uint64_t next_image_stats = 0;
-  std::string image_stats;
-  std::uint32_t slow_frame_us = 33000;
   // Input arrives in callbacks between frames; actions wait for the runtime there.
   std::vector<const char*> actions;
   GamepadState pad;
   std::uint32_t key_buttons = 0, hat_buttons = 0;
-  bool l2_down = false, r2_down = false;
+  TriggerEdge l2, r2;
   // The remote's OK while held: when it went down, and whether it already counted as a long press.
   std::uint64_t ok_down_ms = 0;
   bool ok_held = false, ok_long = false;
-  // A held direction repeats after 350 ms, every 110 ms, as on the desktop.
-  int held_button = -1;
-  const char* held_action = nullptr;
-  std::uint64_t next_repeat = 0;
+  Repeater repeater; // its sources are GamepadState buttons
 
   ~Host() {
-    gpu.stop();
-    roa_stop_images();
-    archives::stop();
-    browser_capture::stop();
-    lan::stop();
-    packages::stop();
-    removals::stop();
-    network::stop();
-    video_layers::stop();
-    if (runtime_started) er_runtime_shutdown();
-    text_shaper::shutdown();
-    roa_stop_sound();
-    render_workers::stop();
-    if (backend_started) er_software_backend_destroy();
+    core.stop();
     presenter.release();
     destroy_surface();
     if (context != EGL_NO_CONTEXT) eglDestroyContext(display, context);
@@ -251,97 +214,14 @@ struct Host {
   bool boot() {
     std::printf("GL %s / %s\n", glGetString(GL_VERSION), glGetString(GL_RENDERER));
     er_perf_set_clock(perf_clock);
-    if (!presenter.init(width, height)) return false;
-    presenter_started = true;
-    backend_started = er_software_backend_init(width, height);
-    if (!backend_started || !damage_tracker_install(width, height)) return false;
-    er_set_layers_enabled(presenter.layers_supported());
-    // The GPU draws unless ROA_GPU=0; it needs the ops in drawing order, from one worker.
-    const char* gpu_option = std::getenv("ROA_GPU");
-    const bool gpu_drawing = !gpu_option || std::strcmp(gpu_option, "0") != 0;
-    const char* workers = std::getenv("ROA_RENDER_WORKERS");
-    render_worker_count = render_workers::start(gpu_drawing ? 1
-                                                : workers && std::atoi(workers) > 0 ? std::atoi(workers)
-                                                                                    : render_workers::available_cpus());
-    std::printf("[ROA] render workers=%d of %d, cpus=%d, %s\n", render_worker_count,
-                render_workers::max_workers(), render_workers::available_cpus(), gpu_drawing ? "gpu" : "software");
-    if (gpu_drawing && !gpu.start(width, height, GpuRenderer::Mode::draw))
-      std::fprintf(stderr, "[ROA] gpu renderer: could not start\n");
-    if (network::start()) roa_start_images();
-    roa_start_sound();
-    ErRuntimeConfig cfg = {};
-    cfg.screen_width = width; cfg.screen_height = height; cfg.screen_scale = 2;
-    cfg.memory_limit = kJsMemoryLimit;
-    cfg.malloc_functions = js_heap_functions();
-    cfg.max_stack_size = 1024 * 1024;
-    cfg.install_host_globals = roa_install_host_api;
-    runtime_started = er_runtime_init(&cfg);
-    if (!runtime_started) return false;
-    er_register_assets();
-    text_shaper::install((files + "/fonts").c_str(), [](const char* line) { std::printf("[ROA] %s\n", line); });
-    const std::string path = files + "/app.bundle.js";
-    FILE* file = std::fopen(path.c_str(), "rb");
-    if (!file) {
-      std::fprintf(stderr, "[ROA] no bundle at %s: %s\n", path.c_str(), std::strerror(errno));
-      return false;
-    }
-    std::fseek(file, 0, SEEK_END);
-    const long size = std::ftell(file);
-    std::fseek(file, 0, SEEK_SET);
-    // QuickJS's source parser requires a trailing NUL beyond the supplied length.
-    std::vector<char> source(static_cast<std::size_t>(std::max(size, 0L)) + 1, '\0');
-    const bool read = size >= 0 && std::fread(source.data(), 1, static_cast<std::size_t>(size), file) ==
-                                       static_cast<std::size_t>(size);
-    std::fclose(file);
-    if (!read || !er_runtime_load_source(source.data(), static_cast<std::size_t>(size), path.c_str())) return false;
-    if (const char* text = std::getenv("ROA_INPUT_SCRIPT")) {
-      char error[160];
-      if (!script.parse(text, error, sizeof error)) std::fprintf(stderr, "ROA_INPUT_SCRIPT: %s\n", error);
-    }
-    previous_step_us = now_us();
-    booted = true;
-    return true;
-  }
-
-  bool call_input(const char* name, int argc, JSValue* argv) {
-    gc_scheduler.input(now_us());
-    er_perf_phase_begin(ER_PERF_PHASE_JS);
-    JSContext* ctx = er_runtime_context();
-    JSValue global = JS_GetGlobalObject(ctx);
-    JSValue fn = JS_GetPropertyStr(ctx, global, name);
-    JSValue result = JS_Call(ctx, fn, global, argc, argv);
-    const bool ok = !JS_IsException(result);
-    if (!ok) {
-      JSValue error = JS_GetException(ctx);
-      const char* message = JS_ToCString(ctx, error);
-      std::fprintf(stderr, "Input failed: %s\n", message ? message : "JS exception");
-      if (message) JS_FreeCString(ctx, message);
-      JS_FreeValue(ctx, error);
-    }
-    JS_FreeValue(ctx, result);
-    for (int i = 0; i < argc; ++i) JS_FreeValue(ctx, argv[i]);
-    JS_FreeValue(ctx, fn);
-    JS_FreeValue(ctx, global);
-    er_perf_phase_end(ER_PERF_PHASE_JS);
-    return ok;
-  }
-
-  bool dispatch(const char* action) {
-    JSValue arg = JS_NewString(er_runtime_context(), action);
-    return call_input("__roaDispatch", 1, &arg);
+    booted = presenter.init(width, height) && core.start_engine(presenter) && core.start_runtime() &&
+             core.load_file(er_register_assets, (files + "/fonts").c_str(), (files + "/app.bundle.js").c_str());
+    return booted;
   }
 
   void press(HostAction action, int button) {
     actions.push_back(action_name(action));
-    if (repeats(action)) {
-      held_button = button;
-      held_action = action_name(action);
-      next_repeat = now_ms() + 350;
-    }
-  }
-
-  void release(int button) {
-    if (button == held_button) held_action = nullptr;
+    repeater.press(action, button, now_ms());
   }
 
   // 1 when the event was the app's.
@@ -363,7 +243,7 @@ struct Host {
           }
         } else if (action == AKEY_EVENT_ACTION_UP) {
           key_buttons &= ~(1u << binding.button);
-          release(binding.button);
+          repeater.release(binding.button);
           if (remote_ok(key) && ok_held && !ok_long) actions.push_back(action_name(HostAction::confirm));
           if (remote_ok(key)) ok_held = false;
         }
@@ -383,14 +263,8 @@ struct Host {
                       AMotionEvent_getAxisValue(event, AMOTION_EVENT_AXIS_BRAKE, 0));
     pad.r2 = std::max(AMotionEvent_getAxisValue(event, AMOTION_EVENT_AXIS_RTRIGGER, 0),
                       AMotionEvent_getAxisValue(event, AMOTION_EVENT_AXIS_GAS, 0));
-    // Triggers act on crossing half travel and re-arm below a quarter.
-    const auto crossed = [](bool& down, float travel) {
-      if (!down && travel > 0.5f) return down = true;
-      if (down && travel < 0.25f) down = false;
-      return false;
-    };
-    if (crossed(l2_down, pad.l2)) actions.push_back(action_name(HostAction::l2));
-    if (crossed(r2_down, pad.r2)) actions.push_back(action_name(HostAction::r2));
+    if (l2.crossed(pad.l2)) actions.push_back(action_name(HostAction::l2));
+    if (r2.crossed(pad.r2)) actions.push_back(action_name(HostAction::r2));
     // A controller's d-pad is a hat: its directions press and release like keys.
     const float hat_x = AMotionEvent_getAxisValue(event, AMOTION_EVENT_AXIS_HAT_X, 0);
     const float hat_y = AMotionEvent_getAxisValue(event, AMOTION_EVENT_AXIS_HAT_Y, 0);
@@ -400,75 +274,31 @@ struct Host {
     for (int i = 0; i < 4; ++i) {
       const std::uint32_t bit = 1u << i;
       if ((hat & bit) && !(hat_buttons & bit)) press(kHat[i], i);
-      else if (!(hat & bit) && (hat_buttons & bit)) release(i);
+      else if (!(hat & bit) && (hat_buttons & bit)) repeater.release(i);
     }
     hat_buttons = hat;
     return 1;
   }
 
-  bool play_script() {
-    const char* action = script.next(now_ms());
-    if (!action) return true;
-    std::printf("[ROA] script: %s\n", action);
-    if (!std::strcmp(action, "quit")) running = false;
-    else if (VirtualPad::is_step(action)) {
-      char error[160];
-      if (!virtual_pad.apply(action, now_ms(), error, sizeof error)) std::fprintf(stderr, "script: %s\n", error);
-    } else if (!std::strncmp(action, "shot:", 5)) {
-      char path[PATH_MAX];
-      const std::string name = std::string("/temp0/") + (action + 5) + ".bmp";
-      // With the GPU drawing, the software framebuffer holds only what it left to the CPU.
-      const bool saved = host::resolve_path(name.c_str(), path, sizeof path) &&
-                         (gpu.drawing() ? gpu.save_screen(presenter, path) : save_screenshot(path));
-      std::printf("[ROA] shot %s: %s\n", path, saved ? "saved" : std::strerror(errno));
-    } else return dispatch(action);
-    return true;
-  }
-
   bool frame() {
-    if (const char* line = stats.start_frame(now_us())) std::printf("[ROA] %s\n", line);
-    er_set_raster_deferred(true);
+    core.begin_frame();
     if (ok_held && !ok_long && now_ms() - ok_down_ms >= kLongPressMs) {
       ok_long = true;
       actions.push_back(action_name(HostAction::triangle));
     }
     for (const char* action : actions)
-      if (!dispatch(action)) return false;
+      if (!core.dispatch(action)) return false;
     actions.clear();
-    if (!play_script()) return false;
-    if (held_action) {
-      const bool down = ((key_buttons | hat_buttons) >> held_button) & 1;
-      if (!down) held_action = nullptr;
-      else if (now_ms() >= next_repeat) {
-        next_repeat = now_ms() + 110;
-        if (!dispatch(held_action)) return false;
-      }
-    }
+    if (!core.play_script(now_ms())) return false;
+    if (core.quit_requested()) running = false;
+    const bool held = repeater.holding() && (((key_buttons | hat_buttons) >> repeater.source()) & 1);
+    if (const char* action = repeater.due(held, now_ms()); action && !core.dispatch(action)) return false;
     if (!running) return true;
     GamepadState state = pad;
     state.buttons = key_buttons | (hat_buttons & 0xFu);
     if (state.l2 > 0.5f) state.buttons |= 1u << 10;
     if (state.r2 > 0.5f) state.buttons |= 1u << 11;
-    for (std::uint32_t pressed = virtual_pad.merge(state, now_ms()), i = 0; pressed; pressed >>= 1, ++i) {
-      const char* held = pressed & 1 ? VirtualPad::action(i) : nullptr;
-      if (held && !dispatch(held)) return false;
-    }
-    roa_set_gamepad(state);
-    stats.lap(FrameStats::input, now_us());
-    er_perf_phase_begin(ER_PERF_PHASE_JS);
-    er_runtime_pump();
-    const std::int64_t step_us = now_us();
-    const bool stepped = roa_frame(er_runtime_context(), std::min(50.0, (step_us - previous_step_us) / 1000.0));
-    previous_step_us = step_us;
-    er_perf_phase_end(ER_PERF_PHASE_JS);
-    if (!stepped) {
-      std::fprintf(stderr, "Frame callback failed\n");
-      return false;
-    }
-    er_set_raster_deferred(false);
-    er_commit();
-    if (gpu.active()) gpu.replay();
-    stats.lap(FrameStats::update, now_us());
+    if (!core.deliver_pad(state, now_ms()) || !core.advance(core.wall_elapsed_ms())) return false;
     if (roa_exit_requested()) {
       running = false;
       return true;
@@ -476,40 +306,12 @@ struct Host {
     EGLint sw = 0, sh = 0;
     eglQuerySurface(display, surface, EGL_WIDTH, &sw);
     eglQuerySurface(display, surface, EGL_HEIGHT, &sh);
-    const std::size_t repainted = damage_tracker_area();
-    const bool still = !exposed && presenter.unchanged(damage_tracker_rects(), damage_tracker_moves(), sw, sh);
+    const HostCore::Presented presented = core.present(sw, sh, 16667, !exposed);
     exposed = false;
-    if (!still) {
-      er_perf_phase_begin(ER_PERF_PHASE_PRESENT);
-      int layer_count = 0;
-      const ERLayer* layers = er_get_layers(&layer_count);
-      presenter.set_layers({layers, static_cast<std::size_t>(layer_count)});
-      video_layers::update(now_us(), 16667);
-      const bool drawn = gpu.drawing() ? presenter.draw_texture(gpu.texture(), sw, sh)
-                                       : presenter.draw(er_software_framebuffer(), damage_tracker_rects(),
-                                                        damage_tracker_moves(), sw, sh);
-      if (!drawn) return false;
-      er_perf_phase_end(ER_PERF_PHASE_PRESENT);
-      const GlPresenter::Timing& t = presenter.last_timing();
-      stats.note_present(t.upload_us, t.draw_us, t.upload_bytes);
-    }
-    damage_tracker_clear();
-    stats.lap(FrameStats::present, now_us());
+    if (!presented.ok) return false;
     // A still frame waits for the next vblank by swapping anyway: the swap interval paces the loop.
     eglSwapBuffers(display, surface);
-    stats.lap(FrameStats::swap, now_us());
-    if (const char* line = gc_scheduler.frame(JS_GetRuntime(er_runtime_context()), now_us(), repainted,
-                                              static_cast<std::size_t>(width) * height))
-      std::printf("[ROA] %s\n", line);
-    embedded_renderer_tick(16);
-    if (const char* line = stats.end_frame(slow_frame_us)) std::printf("[ROA] %s\n", line);
-    if (now_ms() >= next_image_stats) {
-      next_image_stats = now_ms() + 2000;
-      if (std::string line = images::stats(); line != image_stats) {
-        std::printf("[ROA] images: %s\n", line.c_str());
-        image_stats = std::move(line);
-      }
-    }
+    core.end_frame();
     return !*er_runtime_last_error();
   }
 };
@@ -560,7 +362,7 @@ void android_main(android_app* app) {
   host.app = app;
   host.files = app->activity->externalDataPath ? app->activity->externalDataPath : app->activity->internalDataPath;
   app->userData = &host;
-  host.gc_scheduler.during_collection(Host::video_during_collection);
+  host.core.gc_scheduler.during_collection(Host::video_during_collection);
   app->onAppCmd = on_command;
   app->onInputEvent = on_input;
   ANativeActivity_setWindowFlags(app->activity, AWINDOW_FLAG_KEEP_SCREEN_ON | AWINDOW_FLAG_FULLSCREEN, 0);
@@ -572,7 +374,7 @@ void android_main(android_app* app) {
   const std::string certificates = std::string(app->activity->internalDataPath) + "/cacerts.pem";
   if (gather_certificates(certificates)) android_set_ca_bundle(certificates.c_str());
   android_set_device(property("ro.product.model").c_str(), property("ro.build.version.release").c_str());
-  read_options(host.files + "/options.env");
+  HostCore::load_env_file((host.files + "/options.env").c_str(), log_line);
   std::printf("[ROA] files %s, layout %dx%d\n", host.files.c_str(), width, height);
 
   while (host.running && !app->destroyRequested) {
