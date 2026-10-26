@@ -8,8 +8,10 @@
   the CPU, GPU and memory clocks for its run, decodes video with NVDEC, and takes the controller and the
   touchscreen. Anyfin's home screen holds 60 fps there.
 
-- A touchscreen is input protocol v6: `__ps5ReactScreenTouch(x, y)`, where a tap presses the element under
-  the finger and a drag scrolls the ScrollView under it, or steps focus where nothing scrolls that way.
+- A touchscreen is input protocol v6: `__ps5ReactScreenTouch(x, y)`, working as on a phone. A tap presses
+  the element under the finger, a drag scrolls the ScrollView under it and flings it on when let go of
+  while moving, and focus is neither shown nor scrolled to until the next button (`useTouching`). A page
+  the app translates to its focused row scrolls under a finger through `usePan` and `PanView`.
   The desktop preview's mouse is one, and input scripts take `tap:X:Y` and `drag:X1:Y1:X2:Y2`.
 
 - The GPU renderer keeps the pictures the engine draws on the CPU (icons) by content, so one drawn the

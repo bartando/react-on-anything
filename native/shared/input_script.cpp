@@ -117,6 +117,24 @@ bool InputScript::parse(const char* text, char* error, std::size_t size) {
       steps_.push_back({"touch:up", 0});
       continue;
     }
+    if (token == "finger:up") {
+      steps_.push_back({"screen:up", 0});
+      continue;
+    }
+    if (token.rfind("finger:", 0) == 0) {
+      // finger:X:Y puts a finger at (X, Y) on the touchscreen and leaves it there until finger:up, so a
+      // script can take a shot of a gesture in progress.
+      double x = std::strtod(token.c_str() + 7, &rest), y = -1;
+      if (*rest == ':') y = std::strtod(rest + 1, &rest);
+      if (x < 0 || y < 0 || *rest) {
+        std::snprintf(error, size, "bad finger '%s' (finger:X:Y in screen px, or finger:up)", token.c_str());
+        return false;
+      }
+      char sample[48];
+      std::snprintf(sample, sizeof sample, "screen:%.1f,%.1f", x, y);
+      steps_.push_back({sample, 0});
+      continue;
+    }
     if (token.rfind("tap:", 0) == 0 || token.rfind("drag:", 0) == 0) {
       // tap:X:Y and drag:X1:Y1:X2:Y2: a finger on the touchscreen in screen px, then lifting; a drag
       // slides from one point to the other over kSwipeFrames frames.
@@ -161,7 +179,7 @@ bool InputScript::parse(const char* text, char* error, std::size_t size) {
     if (!action) {
       std::string known;
       for (const char* name : kActionNames) known += std::string(name) + ", ";
-      std::snprintf(error, size, "unknown action '%s' (use %squit, wait:MS, shot:NAME, swipe:DIRECTION:TRAVEL, tap:X:Y, drag:X1:Y1:X2:Y2, hold:, release:, trigger:)",
+      std::snprintf(error, size, "unknown action '%s' (use %squit, wait:MS, shot:NAME, swipe:DIRECTION:TRAVEL, tap:X:Y, drag:X1:Y1:X2:Y2, finger:X:Y, finger:up, hold:, release:, trigger:)",
                     token.c_str(), known.c_str());
       return false;
     }

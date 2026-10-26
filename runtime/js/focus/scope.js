@@ -40,12 +40,15 @@ const actions = {
   focus: target => manager.focus(target),
   blur: () => manager.blur(),
   focusedRect: () => manager.focusedRect(),
+  touching: () => manager.touching,
 };
 
 /**
  * `useFocus()` without `focusedKey`: imperative focus that never re-renders the caller, for components
- * that move focus but do not draw it (an app root, a page).
- * @returns {{focus: (key: string) => boolean, blur: () => void, focusedRect: () => object | null}}
+ * that move focus but do not draw it (an app root, a page). `touching()` is whether a finger drives the
+ * touchscreen now, which a page that scrolls itself to focus leaves alone.
+ * @returns {{focus: (key: string) => boolean, blur: () => void, focusedRect: () => object | null,
+ *   touching: () => boolean}}
  */
 export function useFocusActions() {
   return actions;
@@ -65,4 +68,19 @@ export function useNavigationEvents(listener) {
     navigationListeners.add(forward);
     return () => { navigationListeners.delete(forward); };
   }, []);
+}
+
+/**
+ * Whether the touchscreen is in use: from a finger landing until the next button. Focus is kept but
+ * not shown meanwhile, and nothing scrolls to it. Re-renders the caller when it changes.
+ * @returns {boolean}
+ */
+export function useTouching() {
+  const [touching, setTouching] = useState(manager.touching);
+  useLayoutEffect(() => {
+    setTouching(manager.touching);
+    manager.modeListeners.add(setTouching);
+    return () => { manager.modeListeners.delete(setTouching); };
+  }, []);
+  return touching;
 }

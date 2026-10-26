@@ -12,7 +12,7 @@ import {AnchorContext, FrameContext, manager, NodeContext, ScopeContext} from '.
 
 /** Props that only the focus runtime reads; they never reach the host element. */
 export const FOCUS_PROPS = ['focusable', 'autoFocus', 'focusKey', 'nextFocusUp', 'nextFocusDown', 'nextFocusLeft',
-  'nextFocusRight', 'onFocus', 'onBlur'];
+  'nextFocusRight', 'onFocus', 'onBlur', 'onDrag'];
 
 /** @param {object} props @param {boolean} [byDefault] focusable without any focus prop (Pressable) */
 export function isFocusable(props, byDefault = false) {
@@ -69,7 +69,7 @@ export function useFocusNode(options, enabled = true) {
     };
   }, [node]);
   if (!node) return null;
-  return {node, focused: manager.focused === node, pressed: node.pressed,
+  return {node, focused: manager.shows(node), pressed: node.pressed,
     focusProps: {onLayout: self.current.onLayout, onPress: options.onPress}};
 }
 
@@ -86,11 +86,14 @@ export function useFocusable(options = {}) {
   return {focused, pressed, focusProps: {...focusProps, focusable: false}};
 }
 
-/** Whether the nearest focusable ancestor element has focus. @returns {boolean} */
+/**
+ * Whether the nearest focusable ancestor element shows focus: it has it, and no finger is driving the
+ * touchscreen. @returns {boolean}
+ */
 export function useIsFocused() {
   const node = useContext(NodeContext);
   useNodeState(node);
-  return node !== null && manager.focused === node;
+  return node !== null && manager.shows(node);
 }
 
 function Focusable({host, props, forwardedRef}) {

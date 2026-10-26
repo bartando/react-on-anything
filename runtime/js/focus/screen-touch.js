@@ -1,11 +1,13 @@
 // Copyright (C) 2026 half144 and PS5 React contributors
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Additional attribution term: see LICENSE-ATTRIBUTION.
-// A touchscreen (the Switch's): a tap presses the element under the finger, as a phone's would, and a
-// drag scrolls the ScrollView under it along the drag's axis, the content following the finger. Focus
-// stays where it was through a drag; the next D-pad press goes on from there. Where no ScrollView
-// scrolls that way (a page that moves to its focused row by itself), the drag steps focus instead, a
-// move per stretch of travel against the finger, as the content would go. See docs/NAVIGATION.md.
+// A touchscreen (the Switch's), as on a phone: the content follows the finger, detached from focus. A
+// finger resting on an element shows it pressed, and lifting it there presses it; a drag scrolls the
+// ScrollView under it along the drag's axis, and let go of while moving, flings it on; a touch on a
+// coasting list catches it. An element with `onDrag` (a seek bar) takes the finger itself from where it
+// lands until it lifts. Focus is neither shown nor revealed meanwhile: the next button press brings
+// it back (FocusManager.resume). Where nothing scrolls along the drag, nothing moves. See
+// docs/NAVIGATION.md.
 import {screenRect, scrolledBy, shownIn} from './frames.js';
 
 /**
@@ -14,38 +16,73 @@ import {screenRect, scrolledBy, shownIn} from './frames.js';
  * @typedef {import('./manager.js').FocusManager} FocusManager
  */
 
+// The finger's speed at release is its travel over the last VELOCITY_MS; one that rested longer than
+// REST_MS before lifting flings nothing.
+const VELOCITY_MS = 100;
+const REST_MS = 50;
+
 export class ScreenTouch {
   /**
    * @param {{hit: (x: number, y: number) => Node | null, frameAt: (x: number, y: number, horizontal: boolean) => Frame | null,
-   *   press: (node: Node) => void, scroll: (frame: Frame, dx: number, dy: number) => void,
-   *   step: (direction: import('./geometry.js').Direction) => void}} actions
+   *   down: () => void, hold: (node: Node | null) => void, tap: (node: Node | null) => void,
+   *   grab: (node: Node, phase: 'start' | 'move' | 'end', x: number, y: number) => void,
+   *   scroll: (frame: Frame, dx: number, dy: number) => void,
+   *   fling: (frame: Frame, vx: number, vy: number) => void, halt: (frame: Frame) => boolean}} actions
+   *   `down` when a finger lands; `hold` shows what it rests on pressed (null: nothing); `tap` on an
+   *   element or on nothing focusable (null); `fling` in screen px per ms; `halt` stops a fling and says
+   *   whether there was one
    * @param {number} slop travel in screen px before a touch is a drag rather than a tap
-   * @param {number} stride travel in screen px per focus step, where a drag has nothing to scroll
+   * @param {number} minFling the slowest release in screen px per ms that flings
+   * @param {() => number} [now] ms
    */
-  constructor(actions, slop, stride) {
+  constructor(actions, slop, minFling, now = () => performance.now()) {
     this.actions = actions;
     this.slop = slop;
-    this.stride = stride;
+    this.minFling = minFling;
+    this.now = now;
+    this.flung = null;
     this.release();
   }
 
   /** The finger at (x, y) in screen px; `null` x when it lifts. */
   touch(x, y) {
+    const time = this.now();
     if (x == null) {
-      if (this.start && !this.dragging) {
-        const node = this.actions.hit(this.start.x, this.start.y);
-        if (node) this.actions.press(node);
+      if (this.grabbed) this.actions.grab(this.grabbed, 'end', this.last.x, this.last.y);
+      else if (this.start && !this.dragging && !this.caught) {
+        this.actions.hold(null);
+        this.actions.tap(this.target);
       }
+      if (this.dragging && this.frame) this.letGo(time);
       return this.release();
     }
+    this.samples.push({time, x, y});
+    while (this.samples.length > 2 && time - this.samples[0].time > VELOCITY_MS) this.samples.shift();
     if (!this.start) {
       this.start = this.last = {x, y};
+      this.actions.down();
+      // A touch on a coasting list stops it there and presses nothing, as on a phone.
+      this.caught = Boolean(this.flung && this.actions.halt(this.flung));
+      this.flung = null;
+      this.target = this.caught ? null : this.actions.hit(x, y);
+      if (this.target?.props?.onDrag) {
+        this.grabbed = this.target;
+        this.target = null;
+        this.actions.grab(this.grabbed, 'start', x, y);
+      } else if (this.target) this.actions.hold(this.target);
+      return undefined;
+    }
+    if (this.grabbed) {
+      this.last = {x, y};
+      this.actions.grab(this.grabbed, 'move', x, y);
       return undefined;
     }
     if (!this.dragging) {
       const dx = x - this.start.x, dy = y - this.start.y;
       if (Math.max(Math.abs(dx), Math.abs(dy)) < this.slop) return undefined;
       this.dragging = true;
+      if (this.target) this.actions.hold(null);
+      this.target = null;
       this.horizontal = Math.abs(dx) >= Math.abs(dy);
       this.frame = this.actions.frameAt(this.start.x, this.start.y, this.horizontal);
       // The drag starts where the finger left the slop, so the content does not jump by it.
@@ -54,26 +91,29 @@ export class ScreenTouch {
     }
     const moved = this.horizontal ? x - this.last.x : y - this.last.y;
     this.last = {x, y};
-    if (this.frame) {
-      if (moved) this.actions.scroll(this.frame, this.horizontal ? moved : 0, this.horizontal ? 0 : moved);
-      return undefined;
-    }
-    // Steps against the finger: dragging up brings what is below, so focus goes down.
-    this.travel += moved;
-    const [back, forward] = this.horizontal ? ['left', 'right'] : ['up', 'down'];
-    const due = Math.trunc(-this.travel / this.stride);
-    for (; this.taken < due; this.taken++) this.actions.step(forward);
-    for (; this.taken > due; this.taken--) this.actions.step(back);
+    if (this.frame && moved) this.actions.scroll(this.frame, this.horizontal ? moved : 0, this.horizontal ? 0 : moved);
     return undefined;
   }
 
+  // Flings the dragged view at the finger's speed along the drag's axis, if it was still moving.
+  letGo(time) {
+    const first = this.samples[0], last = this.samples[this.samples.length - 1];
+    if (!first || last === first || time - last.time > REST_MS) return;
+    const speed = (this.horizontal ? last.x - first.x : last.y - first.y) / (last.time - first.time);
+    if (!(Math.abs(speed) >= this.minFling)) return;
+    this.actions.fling(this.frame, this.horizontal ? speed : 0, this.horizontal ? 0 : speed);
+    this.flung = this.frame;
+  }
+
   release() {
+    this.samples = [];
+    this.target = null;
+    this.grabbed = null;
+    this.caught = false;
     this.start = this.last = null;
     this.dragging = false;
     this.horizontal = false;
     this.frame = null;
-    this.travel = 0;
-    this.taken = 0;
   }
 }
 
@@ -87,19 +127,14 @@ function within(scope, ancestor) {
   return false;
 }
 
-/** The trapping scope focus is in, if any: a tap does not reach past it. @param {FocusManager} manager */
-function trapOf(manager) {
-  for (let scope = manager.focused?.scope; scope; scope = scope.parent) if (scope.props.trap) return scope;
-  return null;
-}
-
 /**
  * The focusable element at (x, y) on screen: the smallest one there that the D-pad could reach, shown
  * through its ScrollViews and not in a hidden layer.
  * @param {FocusManager} manager @returns {Node | null}
  */
 export function hitNode(manager, x, y) {
-  const trap = trapOf(manager);
+  // A tap does not reach past the trapping scope focus is in.
+  const trap = manager.trapScope();
   const point = {x, y, width: 1, height: 1};
   let best = null, area = Infinity;
   for (const node of manager.nodes) {

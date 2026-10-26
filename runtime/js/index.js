@@ -11,7 +11,7 @@ export {AppRegistry, Animated, useAnimatedValue, Easing, LayoutAnimation, Svg, P
 export const Text = inspectableText(EngineText);
 setFrameBatcher(unstable_batchedUpdates);
 export {View, Image, ReleaseImages, Pressable, ScrollView, VirtualList, FocusScope, useFocusable, useFocus, useFocusActions,
-  useIsFocused, useNavigationEvents} from './focus/index.js';
+  useIsFocused, useNavigationEvents, useTouching, PanView, usePan} from './focus/index.js';
 export {motion, AnimatePresence, transitions} from './motion/index.js';
 export {Screens, Screen, useIsScreenActive} from './screens.js';
 export {Video} from './video.js';

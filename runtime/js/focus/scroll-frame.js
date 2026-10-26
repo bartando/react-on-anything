@@ -23,16 +23,25 @@ const FRAME_MS = 1000 / 60;
 // that only flies past is never fetched; what the view stops on (with the rows the list mounts ahead)
 // starts then. Cached art still draws during the scroll.
 const IMAGE_DEFER_MS = 150;
+// A flung view coasts on, slowing as a phone's does: its speed falls by e every FLING_DECAY_MS, and it
+// stops below FLING_STOP logical px per ms or at the content's edge.
+const FLING_DECAY_MS = 325;
+const FLING_STOP = 0.02;
 
 function assignRef(ref, value) {
   if (typeof ref === 'function') ref(value);
   else if (ref) ref.current = value;
 }
 
-/** @param {import('./manager.js').Frame | null} parent */
-export function createFrame(parent) {
+/**
+ * @param {import('./manager.js').Frame | null} parent
+ * @param {(handle: unknown, x: number, y: number) => number[]} [scrollTo] moves the content as
+ *   NativeUI.scrollTo does (NaN keeps an axis) and returns [x, y, maxX, maxY] where it is; a PanView's
+ *   moves a page the app translates
+ */
+export function createFrame(parent, scrollTo = (handle, x, y) => NativeUI.scrollTo(handle, x, y)) {
   const frame = {
-    parent, x: 0, y: 0, props: {}, forwardedRef: null, handle: null, viewport: null, timer: null, target: null,
+    parent, x: 0, y: 0, props: {}, forwardedRef: null, handle: null, viewport: null, timer: null, flinging: false, target: null,
     speed: [0, 0], position: [0, 0], from: [0, 0], to: [0, 0], progress: 1, listeners: new Set(),
     /**
      * @param {import('./geometry.js').Rect} rect pre-scroll, like `viewport`
@@ -44,7 +53,7 @@ export function createFrame(parent) {
     reveal(rect, anchor, {instant = false} = {}) {
       const {viewport, handle} = frame;
       if (!viewport || handle == null) return;
-      const [fromX, fromY, maxX, maxY] = NativeUI.scrollTo(handle, NaN, NaN);
+      const [fromX, fromY, maxX, maxY] = scrollTo(handle, NaN, NaN);
       const margin = Math.round(screen.width * MARGIN);
       const x = revealOffset(frame.x, rect.x - viewport.x, rect.width, viewport.width, maxX, margin);
       const y = anchor && !frame.props.horizontal
@@ -52,7 +61,7 @@ export function createFrame(parent) {
         : revealOffset(frame.y, rect.y - viewport.y, rect.height, viewport.height, maxY, margin);
       if (instant) {
         frame.stop();
-        const [atX, atY] = NativeUI.scrollTo(handle, Math.round(x), Math.round(y));
+        const [atX, atY] = scrollTo(handle, Math.round(x), Math.round(y));
         frame.x = Math.round(atX);
         frame.y = Math.round(atY);
         frame.position = [frame.x, frame.y];
@@ -67,6 +76,7 @@ export function createFrame(parent) {
     },
     // A new target while scrolling only moves the target; the steps carry on at the current speed.
     animate(fromX, fromY, toX, toY) {
+      if (frame.flinging) frame.stop();
       frame.target = [Math.round(toX), Math.round(toY)];
       if (frame.timer !== null) return;
       const scale = screen.width / 1280;
@@ -90,7 +100,7 @@ export function createFrame(parent) {
         }
         const t = Math.min(frame.progress, 1);
         let [x, y] = frame.from.map((from, axis) => Math.round(from + (frame.to[axis] - from) * t));
-        const [atX, atY] = NativeUI.scrollTo(frame.handle, x, y);
+        const [atX, atY] = scrollTo(frame.handle, x, y);
         deferImageFetches(IMAGE_DEFER_MS);
         // The engine stores offsets as floats. Far from the request means clamped by a content size that
         // changed since the target was chosen: settle where it stopped.
@@ -113,8 +123,8 @@ export function createFrame(parent) {
      * negative `dy`): scrolls by the same amount so nothing moves on screen, mid-animation included.
      */
     shift(dy) {
-      const [, atY] = NativeUI.scrollTo(frame.handle, NaN, NaN);
-      NativeUI.scrollTo(frame.handle, NaN, atY - dy);
+      const [, atY] = scrollTo(frame.handle, NaN, NaN);
+      scrollTo(frame.handle, NaN, atY - dy);
       frame.y -= dy;
       if (frame.timer === null) return;
       frame.from = [frame.from[0], frame.from[1] - dy];
@@ -126,14 +136,47 @@ export function createFrame(parent) {
     drag(dx, dy) {
       if (frame.handle == null) return;
       frame.stop();
-      const [fromX, fromY] = NativeUI.scrollTo(frame.handle, NaN, NaN);
-      const [atX, atY] = NativeUI.scrollTo(frame.handle, Math.round(fromX - dx), Math.round(fromY - dy));
+      const [fromX, fromY] = scrollTo(frame.handle, NaN, NaN);
+      frame.moveTo(fromX - dx, fromY - dy);
+    },
+    /**
+     * Lets the content coast on after a drag at (vx, vy) screen px per ms, along the finger, until it
+     * slows to a stop or meets an edge. A touch catches it (`halt`).
+     */
+    fling(vx, vy) {
+      if (frame.handle == null) return;
+      frame.stop();
+      const stop = FLING_STOP * screen.width / 1280;
+      let [x, y] = scrollTo(frame.handle, NaN, NaN);
+      let speed = [vx, vy];
+      frame.flinging = true;
+      frame.timer = onFrame(elapsedMs => {
+        const decay = Math.exp(-Math.min(elapsedMs, 2 * FRAME_MS) / FLING_DECAY_MS);
+        // The distance the decaying speed covers over this frame, kept fractional between whole-px steps.
+        x -= speed[0] * FLING_DECAY_MS * (1 - decay);
+        y -= speed[1] * FLING_DECAY_MS * (1 - decay);
+        speed = speed.map(v => v * decay);
+        const clamped = !frame.moveTo(x, y);
+        if (clamped || Math.max(Math.abs(speed[0]), Math.abs(speed[1])) < stop) frame.stop();
+      });
+    },
+    /** Stops a fling, as a finger touching the content does; whether there was one. */
+    halt() {
+      if (!frame.flinging) return false;
+      frame.stop();
+      return true;
+    },
+    // Scrolls to (x, y) now, in whole px; false when the content's edge held it short.
+    moveTo(x, y) {
+      const [toX, toY] = [Math.round(x), Math.round(y)];
+      const [atX, atY] = scrollTo(frame.handle, toX, toY);
       frame.x = Math.round(atX);
       frame.y = Math.round(atY);
       frame.position = [frame.x, frame.y];
       deferImageFetches(IMAGE_DEFER_MS);
       frame.notify();
       frame.props.onScrollTarget?.({x: frame.x, y: frame.y});
+      return frame.x === toX && frame.y === toY;
     },
     // Viewport or offset changed; while animating, y is the target, so listeners see where it is going.
     notify() {
@@ -142,6 +185,7 @@ export function createFrame(parent) {
     stop() {
       frame.timer?.();
       frame.timer = null;
+      frame.flinging = false;
     },
     onLayout(event) {
       frame.viewport = event.layout;

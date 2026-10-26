@@ -40,8 +40,9 @@ The controller's buttons in Nintendo's layout: A confirms, B goes back, X is Tri
 ZL/ZR the shoulders and triggers, + Options. The left stick's directions navigate like the D-pad. Holding
 + for a second quits to the Homebrew Menu.
 
-On the console's screen a tap presses the element under it and a drag scrolls the ScrollView under it,
-or steps focus where nothing scrolls that way ([NAVIGATION.md](NAVIGATION.md#host-input-input-protocol-v6)).
+The console's screen works as on a phone: a tap presses the element under it, a drag scrolls the content
+under it and flings it on, and focus hides until the next button
+([NAVIGATION.md](NAVIGATION.md#host-input-input-protocol-v6)).
 
 ## Video
 
