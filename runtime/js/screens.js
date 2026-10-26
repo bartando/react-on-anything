@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Additional attribution term: see LICENSE-ATTRIBUTION.
 // <Screens>: a page switcher that keeps every screen it has shown mounted, hidden while off stage.
-import {Children, createContext, createElement, isValidElement, useContext, useLayoutEffect, useEffect, useRef,
+import {Children, createContext, createElement, isValidElement, memo, useContext, useLayoutEffect, useEffect, useRef,
   useState} from 'react';
 import {FocusScope} from './focus/scope.js';
 import {ReleaseImages} from './focus/image.js';
@@ -101,18 +101,26 @@ export function Screens({active, variants = SLIDE, focusKey, onBack, preload: pr
     if (!state.mounted.includes(id)) continue;
     const onStage = id === state.stage;
     const phase = onStage ? state.phase : 'off';
-    const live = onStage && phase !== 'leaving';
-    const animate = phase === 'entering' ? ['hidden', ENTER] : phase === 'shown' ? 'shown' : 'gone';
-    pages.push(createElement(motion.View, {
-      key: id, variants: labels, initial: false, animate,
-      style: {...FILL, display: onStage ? 'flex' : 'none'},
-      onAnimationComplete: () => {
-        if (onStage) setState(current => settle(current, id, phase, latest.current));
-      },
-    }, createElement(FocusScope, {focusKey: live ? focusKey : undefined, inert: !live, onBack: screen.onBack ?? onBack},
-      createElement(ReleaseImages, {when: !onStage},
-        createElement(ScreenContext.Provider, {value: live},
-          createElement(Frozen, {frozen: !onStage}, screen.children))))));
+    pages.push(createElement(Page, {key: id, id, onStage, phase, labels, focusKey, onBack: screen.onBack ?? onBack,
+      settle: (page, at) => setState(current => settle(current, page, at, latest.current))}, screen.children));
   }
   return pages;
 }
+
+// A page and its wrappers. One that stays off stage does not render at all: each phase of a switch
+// (leaving, entering, shown) re-rendered four wrappers on every page kept, which was most of a switch's
+// React work once the pages were frozen. It takes the current props again when it comes on stage.
+const Page = memo(function Page({id, onStage, phase, labels, focusKey, onBack, settle: settled, children}) {
+  const live = onStage && phase !== 'leaving';
+  const animate = phase === 'entering' ? ['hidden', ENTER] : phase === 'shown' ? 'shown' : 'gone';
+  return createElement(motion.View, {
+    variants: labels, initial: false, animate,
+    style: {...FILL, display: onStage ? 'flex' : 'none'},
+    onAnimationComplete: () => {
+      if (onStage) settled(id, phase);
+    },
+  }, createElement(FocusScope, {focusKey: live ? focusKey : undefined, inert: !live, onBack},
+    createElement(ReleaseImages, {when: !onStage},
+      createElement(ScreenContext.Provider, {value: live},
+        createElement(Frozen, {frozen: !onStage}, children)))));
+}, (before, after) => !before.onStage && !after.onStage);
