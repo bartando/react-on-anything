@@ -270,9 +270,11 @@ export class FocusManager {
     if (!from) return false;
     const frames = new Set();
     for (let frame = current.frame; frame; frame = frame.parent) frames.add(frame);
-    for (let scope = current.scope; scope; scope = scope.parent) {
-      const candidates = this.candidates(scope)
-        .filter(candidate => candidate.node !== current && reachable(candidate.node, frames));
+    const chain = [];
+    for (let scope = current.scope; scope; scope = scope.parent) chain.push(scope);
+    const placed = this.placed(chain).filter(candidate => candidate.node !== current && reachable(candidate.node, frames));
+    for (const [level, scope] of chain.entries()) {
+      const candidates = placed.filter(candidate => candidate.level <= level);
       const winner = findNearest(from, candidates, direction)
         ?? (scope.props.wrap ? findWrap(from, candidates, direction) : null);
       if (winner) {
@@ -331,6 +333,27 @@ export class FocusManager {
       if (!within(node.scope, scope) || !navigable(node.scope)) continue;
       const rect = screenRect(node);
       if (rect && (rect.width > 0 || rect.height > 0)) result.push({node, rect, order: node.order});
+    }
+    return result;
+  }
+
+  /**
+   * The navigable nodes with a box under any of `chain`'s scopes (innermost first), each with the index
+   * of the innermost one it is in, so it is a candidate from that level out. One pass per move: each
+   * level scanning every node, walking its scopes and working out its rect again was most of a move
+   * with a few hidden screens of cards mounted.
+   * @param {Scope[]} chain @returns {{node: Node, rect: Rect, order: number, level: number}[]}
+   */
+  placed(chain) {
+    const levels = new Map(chain.map((scope, index) => [scope, index]));
+    const result = [];
+    for (const node of this.nodes) {
+      let level = -1;
+      let scope = node.scope;
+      for (; scope && !scope.props.inert; scope = scope.parent) if (level < 0 && levels.has(scope)) level = levels.get(scope);
+      if (scope || level < 0) continue;
+      const rect = screenRect(node);
+      if (rect && (rect.width > 0 || rect.height > 0)) result.push({node, rect, order: node.order, level});
     }
     return result;
   }
