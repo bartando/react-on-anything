@@ -20,8 +20,19 @@ reach platform services only through the `@react-on-anything/core` native module
 (`runtime/js/native.js`), which wrap `globalThis.__roaNative`. Its shape is
 fixed by `native/shared/host_api.hpp`: `native/shared/host_api.cpp` installs it
 and implements the filesystem with POSIX, while `native/ps5/`,
-`native/switch/`, `native/android/` and `native/desktop/` implement the platform functions. Calls are synchronous on the
-render thread. Networking calls submit/cancel/poll bounded native tasks; two
+`native/switch/`, `native/android/` and `native/desktop/` implement the platform
+functions. Calls are synchronous on the render thread.
+
+The hosts share everything but the platform: `native/shared/host_core.hpp` starts
+the engine, the services and the runtime, hands input to JavaScript, runs a frame
+from JavaScript's step to the present, and stops it all in one order. A host keeps
+its window or display, reading its input, the swap and its lifecycle; its
+development options come from `ROA_*` variables, or the PS5's `dev/<name>.txt`,
+under the same names. The shared sources every host builds are listed once, in
+`native/shared/core_sources.txt`. A new host is a `native/<platform>/` folder with
+its main loop and the `host::` platform functions.
+
+Networking calls submit/cancel/poll bounded native tasks; two
 workers perform network and disk I/O without touching QuickJS or the engine.
 Remote images have two more workers (fetch and decode) that hand finished
 pixels to the render thread, which registers them with the engine

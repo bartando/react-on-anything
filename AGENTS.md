@@ -14,7 +14,9 @@ comments, user-visible text, and commit messages in English.
 
 - `apps/<app>/`: application JSX, state, manifest, assets, and font configuration.
 - `runtime/js/`: public API and controller subscriptions.
-- `native/shared/`: platform-independent framebuffer presentation.
+- `native/shared/`: platform-independent code: the host core every host runs the engine through
+  (`host_core.hpp`), presentation and the native API. A shared source every host builds goes in
+  `core_sources.txt`, not in the four build lists.
 - `native/desktop/`, `native/ps5/`, `native/switch/` and `native/android/`: platform lifecycle,
   graphics context, and input. A new host function is implemented in every host.
 - `tools/`: dependency bootstrap, bundling, asset baking, builds, and verification.
