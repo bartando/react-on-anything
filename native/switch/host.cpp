@@ -45,6 +45,7 @@ void er_register_assets(void);
 #include <EGL/egl.h>
 #include <sys/stat.h>
 #include <algorithm>
+#include <iterator>
 #include <cerrno>
 #include <climits>
 #include <cmath>
@@ -58,8 +59,19 @@ void er_register_assets(void);
 
 namespace {
 constexpr int width = PS5_REACT_WIDTH, height = PS5_REACT_HEIGHT;
-// The CPU runs at 1020 MHz by default; docked games may boost it to 1785 MHz, and JS is most of a frame.
-constexpr u32 kBoostHz = 1785000000;
+// Clocks for the app's run, restored on exit. By default the CPU runs at 1020 MHz, and handheld the GPU
+// at 384-460 MHz and memory at 1331 MHz: a scroll redraws all 1920x1080 pixels each frame, and the GPU
+// stalled the presenter for up to 80 ms. These are the console's own boost and docked rates.
+struct Clock {
+  PcvModuleId module;
+  u32 hz;
+  const char* name;
+};
+constexpr Clock kBoost[] = {
+  {PcvModuleId_CpuBus, 1785000000, "cpu"},
+  {PcvModuleId_GPU, 768000000, "gpu"},
+  {PcvModuleId_EMC, 1600000000, "memory"},
+};
 
 std::int64_t now_us() { return static_cast<std::int64_t>(armTicksToNs(armGetSystemTick()) / 1000); }
 std::uint64_t now_ms() { return static_cast<std::uint64_t>(now_us() / 1000); }
@@ -98,6 +110,8 @@ constexpr ButtonBinding kButtons[] = {
   {HidNpadButton_Plus, HostAction::options, 14},
 };
 constexpr int kStickL3 = 12, kStickR3 = 13;
+// Holding + this long quits to the Homebrew Menu, as homebrew apps do; a press is still Options.
+constexpr std::uint64_t kQuitHoldMs = 1000;
 
 float stick(s32 value) {
   constexpr float deadzone = 0.16f;
@@ -117,8 +131,11 @@ struct Host {
   InputScript script;
   VirtualPad virtual_pad;
   PadState pad_state{};
-  ClkrstSession cpu_clock{};
-  u32 cpu_hz = 0; // the rate before the boost, restored on exit; 0 without one
+  struct Boosted {
+    ClkrstSession session{};
+    u32 before = 0; // restored on exit; 0 when the clock was not changed
+  } boosted[std::size(kBoost)];
+  bool clkrst = false;
   bool running = true, runtime_started = false, backend_started = false;
   int render_worker_count = 1;
   std::int64_t previous_step_us = 0;
@@ -131,6 +148,7 @@ struct Host {
   const char* held_action = nullptr;
   u64 held_mask = 0;
   std::uint64_t next_repeat = 0;
+  std::uint64_t plus_down_ms = 0;
 
   ~Host() {
     gpu.stop();
@@ -154,26 +172,33 @@ struct Host {
       if (surface != EGL_NO_SURFACE) eglDestroySurface(display, surface);
       eglTerminate(display);
     }
-    if (cpu_hz) {
-      clkrstSetClockRate(&cpu_clock, cpu_hz);
-      clkrstCloseSession(&cpu_clock);
-      clkrstExit();
+    for (Boosted& clock : boosted) {
+      if (!clock.before) continue;
+      clkrstSetClockRate(&clock.session, clock.before);
+      clkrstCloseSession(&clock.session);
     }
+    if (clkrst) clkrstExit();
   }
 
-  void boost_cpu() {
-    const char* option = std::getenv("PS5_REACT_CPU_BOOST");
-    if (option && !std::strcmp(option, "0")) return;
-    if (R_FAILED(clkrstInitialize())) return;
-    if (R_FAILED(clkrstOpenSession(&cpu_clock, PcvModuleId_CpuBus, 3))) { clkrstExit(); return; }
-    u32 before = 0;
-    clkrstGetClockRate(&cpu_clock, &before);
-    if (R_SUCCEEDED(clkrstSetClockRate(&cpu_clock, kBoostHz))) {
-      cpu_hz = before;
-      std::printf("[PS5-REACT] cpu %u -> %u MHz\n", before / 1000000, kBoostHz / 1000000);
-    } else {
-      clkrstCloseSession(&cpu_clock);
-      clkrstExit();
+  // PS5_REACT_BOOST=0 leaves the clocks as the system set them.
+  void boost_clocks() {
+    AppletOperationMode mode = appletGetOperationMode();
+    std::printf("[PS5-REACT] %s\n", mode == AppletOperationMode_Console ? "docked" : "handheld");
+    const char* option = std::getenv("PS5_REACT_BOOST");
+    if ((option && !std::strcmp(option, "0")) || R_FAILED(clkrstInitialize())) return;
+    clkrst = true;
+    for (std::size_t i = 0; i < std::size(kBoost); ++i) {
+      Boosted& clock = boosted[i];
+      if (R_FAILED(clkrstOpenSession(&clock.session, kBoost[i].module, 3))) continue;
+      u32 before = 0;
+      clkrstGetClockRate(&clock.session, &before);
+      if (before && before < kBoost[i].hz && R_SUCCEEDED(clkrstSetClockRate(&clock.session, kBoost[i].hz))) {
+        clock.before = before;
+        std::printf("[PS5-REACT] %s %u -> %u MHz\n", kBoost[i].name, before / 1000000, kBoost[i].hz / 1000000);
+      } else {
+        std::printf("[PS5-REACT] %s stays at %u MHz\n", kBoost[i].name, before / 1000000);
+        clkrstCloseSession(&clock.session);
+      }
     }
   }
 
@@ -285,6 +310,8 @@ struct Host {
     for (const ButtonBinding& binding : kButtons) {
       if (held & binding.mask) state.buttons |= 1u << binding.button;
       if (!(pressed & binding.mask)) continue;
+      // Next to the slow-frame lines, so a lag can be traced to what the player pressed.
+      std::printf("[PS5-REACT] press %s\n", action_name(binding.action));
       if (!dispatch(action_name(binding.action))) return false;
       if (repeats(binding.action)) {
         held_button = binding.button;
@@ -293,11 +320,18 @@ struct Host {
         next_repeat = now_ms() + 350;
       }
     }
+    if (pressed & HidNpadButton_Plus) plus_down_ms = now_ms();
+    if ((held & HidNpadButton_Plus) && now_ms() - plus_down_ms >= kQuitHoldMs) {
+      std::printf("[PS5-REACT] + held: quitting\n");
+      running = false;
+      return true;
+    }
     if (held & HidNpadButton_StickL) state.buttons |= 1u << kStickL3;
     if (held & HidNpadButton_StickR) state.buttons |= 1u << kStickR3;
     if (held_action && !(held & held_mask)) held_action = nullptr;
     if (held_action && now_ms() >= next_repeat) {
       next_repeat = now_ms() + 110;
+      std::printf("[PS5-REACT] press %s (held)\n", held_action);
       if (!dispatch(held_action)) return false;
     }
     const HidAnalogStickState left = padGetStickPos(&pad_state, 0), right = padGetStickPos(&pad_state, 1);
@@ -418,7 +452,7 @@ int main(int, char**) {
   // The engine's state is process-wide: one run per process.
   Host& host = *new Host;
   padInitializeDefault(&host.pad_state);
-  host.boost_cpu();
+  host.boost_clocks();
   if (!host.start_gl()) {
     std::fprintf(stderr, "[PS5-REACT] EGL: could not create an OpenGL ES 3.2 context (0x%x)\n", eglGetError());
   } else if (!host.boot()) {

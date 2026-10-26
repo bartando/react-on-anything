@@ -72,11 +72,20 @@ private:
   struct Stats {
     std::uint64_t replays = 0, ops = 0, draws = 0, regroups = 0, pixel_ops = 0, pixel_bytes = 0, uploads = 0;
     std::uint64_t replay_us = 0, max_replay_us = 0;
+    // Time spent in the driver creating and filling textures, by kind (images, glyphs, CPU-drawn pixels).
+    std::uint64_t upload_us[3] = {}, max_upload_us[3] = {}, upload_count[3] = {}, upload_bytes[3] = {};
     std::uint64_t capture_px[ER_CANVAS_OP_COUNT] = {}, captures[ER_CANVAS_OP_COUNT] = {};
     std::int64_t window_start_us = 0;
   } stats_;
   unsigned int vao_ = 0, shape_ = 0, image_ = 0;
-  unsigned int pixels_ = 0;  // the texture captured ops' pixels are drawn from
+  // Captured ops' pixels by content: what the engine draws the same way each frame (an icon) is uploaded
+  // once, and a new picture gets a texture of its own instead of overwriting one a queued draw still
+  // reads, which stalled the Switch's driver for tens of milliseconds.
+  struct Pixels { unsigned int texture = 0; int width = 0, height = 0; std::uint64_t used = 0; };
+  std::unordered_map<std::uint64_t, Pixels> pixels_;
+  std::uint64_t replay_serial_ = 0;
+  std::size_t pixels_bytes_ = 0;
+  void evict_pixels();
   std::vector<Op>* ops_ = nullptr;
   std::vector<std::pair<const void*, Group>> groups_;
   std::vector<std::uint64_t> missing_;
@@ -93,6 +102,7 @@ private:
   Group& group(const void* buffer, int w, int h);
   const Glyph& glyph(const void* bitmap, int w, int h, int bpp);
   const Image& image(const void* pixels, const char* name, int w, int h, int format);
+  void note_upload(int kind, std::uint64_t us, std::uint64_t bytes);
   void draw_ops();
   struct Uniform { int location; int bytes; std::uint8_t value[64]; };
   std::vector<Uniform> uniforms_;

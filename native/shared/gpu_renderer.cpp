@@ -23,10 +23,34 @@ extern "C" {
 
 struct GpuRenderer::Op {
   ERCanvasOp op;
-  std::vector<std::uint32_t> pixels;  // ER_CANVAS_PIXELS: a copy, the engine's buffer is the call's only
+  std::vector<std::uint32_t> pixels;  // ER_CANVAS_PIXELS: a copy, unless its texture is kept already
+  std::uint64_t hash = 0;             // ER_CANVAS_PIXELS: the picture's fingerprint, its key in pixels_
 };
 
 namespace {
+
+// Kept pictures not drawn for this many replays go, and the oldest go past the byte budget.
+constexpr std::uint64_t kPixelsKeepReplays = 120;
+constexpr std::size_t kPixelsBudgetBytes = 24u << 20;
+
+// A 64-bit fingerprint of a picture's w x h pixels in rows `stride` apart.
+std::uint64_t picture_hash(const std::uint32_t* px, int stride, int w, int h) {
+  std::uint64_t hash = 0x9E3779B97F4A7C15ull ^ (static_cast<std::uint64_t>(w) << 32 | static_cast<std::uint32_t>(h));
+  const auto mix = [&hash](std::uint64_t v) {
+    hash = (hash ^ v) * 0xff51afd7ed558ccdull;
+    hash ^= hash >> 32;
+  };
+  for (int y = 0; y < h; y++) {
+    const std::uint32_t* row = px + static_cast<std::size_t>(y) * stride;
+    int x = 0;
+    for (std::uint64_t v; x + 2 <= w; x += 2) {
+      std::memcpy(&v, row + x, sizeof v);
+      mix(v);
+    }
+    if (x < w) mix(row[x]);
+  }
+  return hash;
+}
 
 std::mutex record_lock;
 
@@ -409,8 +433,9 @@ void GpuRenderer::stop() {
   glyphs_.clear();
   for (auto& [pixels, img] : images_) glDeleteTextures(1, &img.texture);
   images_.clear();
-  if (pixels_) glDeleteTextures(1, &pixels_);
-  pixels_ = 0;
+  for (auto& [hash, kept] : pixels_) glDeleteTextures(1, &kept.texture);
+  pixels_.clear();
+  pixels_bytes_ = 0;
   if (vao_) glDeleteVertexArrays(1, &vao_);
   uniforms_.clear();
   uniform_index_.clear();
@@ -485,11 +510,17 @@ int GpuRenderer::record(const ERCanvasOp* op, void* self_raw) {
   }
   if (op->kind == ER_CANVAS_PIXELS) {
     const auto* px = static_cast<const std::uint32_t*>(op->buffer);
-    Op kept{*op, {}};
-    kept.pixels.reserve(static_cast<std::size_t>(op->w) * op->h);
-    for (int y = 0; y < op->h; y++)
-      kept.pixels.insert(kept.pixels.end(), px + static_cast<std::size_t>(y) * op->width,
-                         px + static_cast<std::size_t>(y) * op->width + op->w);
+    Op kept{*op, {}, picture_hash(px, op->width, op->w, op->h)};
+    // A picture whose texture is kept needs no copy; marking it used keeps it through the next replay.
+    const auto found = self->pixels_.find(kept.hash);
+    if (found != self->pixels_.end() && found->second.width == op->w && found->second.height == op->h) {
+      found->second.used = self->replay_serial_ + 1;
+    } else {
+      kept.pixels.reserve(static_cast<std::size_t>(op->w) * op->h);
+      for (int y = 0; y < op->h; y++)
+        kept.pixels.insert(kept.pixels.end(), px + static_cast<std::size_t>(y) * op->width,
+                           px + static_cast<std::size_t>(y) * op->width + op->w);
+    }
     kept.op.buffer = nullptr;
     self->ops_->push_back(std::move(kept));
     return self->kept();
@@ -569,6 +600,14 @@ GpuRenderer::Group& GpuRenderer::group(const void* buffer, int w, int h) {
   return groups_.back().second;
 }
 
+namespace {
+enum UploadKind { kUploadImage, kUploadGlyph, kUploadPixels };
+std::uint64_t elapsed_us(std::chrono::steady_clock::time_point since) {
+  return static_cast<std::uint64_t>(
+    std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - since).count());
+}
+} // namespace
+
 // A baked glyph's coverage as an 8-bit texture, unpacked once from its 1, 2, 4 or 8 bits per pixel.
 const GpuRenderer::Glyph& GpuRenderer::glyph(const void* bitmap, int w, int h, int bpp) {
   auto found = glyphs_.find(bitmap);
@@ -587,16 +626,25 @@ const GpuRenderer::Glyph& GpuRenderer::glyph(const void* bitmap, int w, int h, i
       coverage[static_cast<std::size_t>(y) * w + x] = c;
     }
   }
+  const auto upload_began = std::chrono::steady_clock::now();
   Glyph g{0, w, h};
   glGenTextures(1, &g.texture);
   glBindTexture(GL_TEXTURE_2D, g.texture);
   glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
   stats_.uploads++;
   glTexImage2D(GL_TEXTURE_2D, 0, GL_R8, w, h, 0, GL_RED, GL_UNSIGNED_BYTE, coverage.data());
+  note_upload(kUploadGlyph, elapsed_us(upload_began), static_cast<std::uint64_t>(w) * h);
   glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
   return glyphs_.emplace(bitmap, g).first->second;
+}
+
+void GpuRenderer::note_upload(int kind, std::uint64_t us, std::uint64_t bytes) {
+  stats_.upload_us[kind] += us;
+  stats_.max_upload_us[kind] = std::max(stats_.max_upload_us[kind], us);
+  stats_.upload_count[kind]++;
+  stats_.upload_bytes[kind] += bytes;
 }
 
 // An image's pixels as a texture, uploaded once per buffer (premultiplied ARGB8888, or RGB565).
@@ -610,6 +658,7 @@ const GpuRenderer::Image& GpuRenderer::image(const void* pixels, const char* nam
     images_.erase(found);
   }
   stats_.uploads++;
+  const auto upload_began = std::chrono::steady_clock::now();
   Image img{0, w, h, format, name ? name : ""};
   glGenTextures(1, &img.texture);
   glBindTexture(GL_TEXTURE_2D, img.texture);
@@ -623,7 +672,28 @@ const GpuRenderer::Image& GpuRenderer::image(const void* pixels, const char* nam
   glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+  note_upload(kUploadImage, elapsed_us(upload_began),
+              static_cast<std::uint64_t>(w) * h * (format == ER_IMG_RGB565 ? 2 : 4));
   return images_.emplace(pixels, img).first->second;
+}
+
+// Drops kept pictures that went unused, then the least recently used past the budget. Under record_lock:
+// a picture recorded without a copy is marked used for the coming replay, so it is never one of them.
+void GpuRenderer::evict_pixels() {
+  for (auto it = pixels_.begin(); it != pixels_.end();) {
+    if (it->second.used + kPixelsKeepReplays >= replay_serial_) { ++it; continue; }
+    glDeleteTextures(1, &it->second.texture);
+    pixels_bytes_ -= static_cast<std::size_t>(it->second.width) * it->second.height * 4;
+    it = pixels_.erase(it);
+  }
+  while (pixels_bytes_ > kPixelsBudgetBytes) {
+    auto oldest = std::min_element(pixels_.begin(), pixels_.end(),
+                                   [](const auto& a, const auto& b) { return a.second.used < b.second.used; });
+    if (oldest == pixels_.end() || oldest->second.used >= replay_serial_) break;
+    glDeleteTextures(1, &oldest->second.texture);
+    pixels_bytes_ -= static_cast<std::size_t>(oldest->second.width) * oldest->second.height * 4;
+    pixels_.erase(oldest);
+  }
 }
 
 void GpuRenderer::replay() {
@@ -633,6 +703,8 @@ void GpuRenderer::replay() {
   stats_.ops += ops_->size();
   if (!ops_->empty()) draw_ops();
   ops_->clear();
+  ++replay_serial_;
+  evict_pixels();
   const auto now = std::chrono::steady_clock::now();
   const auto took = static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(now - began).count());
   stats_.replays++;
@@ -647,6 +719,12 @@ void GpuRenderer::replay() {
                 static_cast<unsigned long long>(stats_.replays), stats_.replay_us / n / 1000.0,
                 stats_.max_replay_us / 1000.0, stats_.ops / n, stats_.draws / n, stats_.regroups / n,
                 stats_.pixel_ops / n, stats_.pixel_bytes / n / 1024.0, stats_.uploads / n);
+    constexpr const char* kUploadNames[] = {"images", "glyphs", "pixels"};
+    for (int kind = 0; kind < 3; kind++)
+      if (stats_.upload_count[kind])
+        std::printf("[PS5-REACT] gpu:   upload %s: %llu, %.0fKB, %.1fms total, %.1fms max\n", kUploadNames[kind],
+                    static_cast<unsigned long long>(stats_.upload_count[kind]), stats_.upload_bytes[kind] / 1024.0,
+                    stats_.upload_us[kind] / 1000.0, stats_.max_upload_us[kind] / 1000.0);
     for (int kind = 0; kind < ER_CANVAS_OP_COUNT; kind++)
       if (stats_.captures[kind])
         std::printf("[PS5-REACT] gpu:   capture %s: %.1f per replay, %.0f kpx each (bounds, before clipping)\n",
@@ -1051,18 +1129,33 @@ void GpuRenderer::draw_ops() {
       }
       case ER_CANVAS_PIXELS: {
         if (op.w <= 0 || op.h <= 0) break;
-        if (!pixels_) {
-          glGenTextures(1, &pixels_);
-          bind_texture(pixels_);
+        stats_.pixel_ops++;
+        auto found = pixels_.find(recorded.hash);
+        if (found == pixels_.end() || found->second.width != op.w || found->second.height != op.h) {
+          // Recorded without a copy only when kept, and kept ones stay until they are replayed.
+          if (recorded.pixels.empty()) break;
+          if (found != pixels_.end()) {
+            if (bound == found->second.texture) bound = 0;
+            glDeleteTextures(1, &found->second.texture);
+            pixels_bytes_ -= static_cast<std::size_t>(found->second.width) * found->second.height * 4;
+            pixels_.erase(found);
+          }
+          const auto bytes = static_cast<std::size_t>(op.w) * op.h * 4;
+          stats_.pixel_bytes += bytes;
+          const auto upload_began = std::chrono::steady_clock::now();
+          Pixels made{0, op.w, op.h, replay_serial_};
+          glGenTextures(1, &made.texture);
+          bind_texture(made.texture);
           glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
           glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+          gl::tex_image_argb(op.w, op.h, recorded.pixels.data());
+          note_upload(kUploadPixels, elapsed_us(upload_began), bytes);
+          pixels_bytes_ += bytes;
+          found = pixels_.emplace(recorded.hash, made).first;
         }
-        bind_texture(pixels_);
-        stats_.pixel_ops++;
-        stats_.pixel_bytes += static_cast<std::uint64_t>(op.w) * op.h * 4;
-        gl::tex_image_argb(op.w, op.h, recorded.pixels.data());
-        texture_draw(pixels_, 0, op.x, op.y, op.w, op.h, static_cast<float>(op.x), static_cast<float>(op.y), op.w,
-                     op.h, nullptr, 1.0f);
+        found->second.used = std::max(found->second.used, replay_serial_);
+        texture_draw(found->second.texture, 0, op.x, op.y, op.w, op.h, static_cast<float>(op.x),
+                     static_cast<float>(op.y), op.w, op.h, nullptr, 1.0f);
         break;
       }
       case ER_CANVAS_MOVE: {
