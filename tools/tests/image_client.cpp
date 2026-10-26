@@ -104,6 +104,13 @@ int main(int argc, char** argv) {
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
     images::release(id, false);
     std::printf("{\"reported\":%zu}\n", wait(1, 400).size());
+  } else if (mode == "many") {
+    // `count` loads at once (url?n=0, 1, ...), all waited for.
+    const int count = std::atoi(argv[3]);
+    for (int i = 0; i < count; ++i) load(url + "?n=" + std::to_string(i), 64, 64, 0, now);
+    std::size_t ready = 0, failed = 0;
+    for (const auto& r : wait(static_cast<std::size_t>(count), 25000)) (r.ready ? ready : failed)++;
+    std::printf("{\"ready\":%zu,\"failed\":%zu}\n", ready, failed);
   } else if (mode == "evict") {
     // Unused images over budget are evicted oldest first; images in use never are.
     images::set_cache_bytes(24 * 1024 * 1024);

@@ -75,6 +75,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if path == "/slow.jpg":
             time.sleep(3)
             path = "/photo.jpg"
+        if path == "/slowish.jpg":
+            time.sleep(1)
+            path = "/photo.jpg"
         if path == "/large":
             body = b"\0" * (9 * 1024 * 1024)
             kind = "application/octet-stream"
@@ -191,6 +194,19 @@ def main():
         before = len(Handler.requests)
         assert run("flyby", origin + "/photo.jpg?flyby") == {"reported": 0}
         assert len(Handler.requests) == before, Handler.requests[before:]
+        # Disk cache entries past their week count as cached when loads are let through, so they take no
+        # connection, and then go to the network: 40 at once, more than the 32 connections, all load.
+        stale = directory / "stale-cache"
+        assert run("many", origin + "/slowish.jpg", 40, cache=str(stale)) == {"ready": 40, "failed": 0}
+        aged = 0
+        for file in stale.rglob("*"):
+            data = bytearray(file.read_bytes()) if file.is_file() else b""
+            if data[:8] == b"P5RIMG01":
+                struct.pack_into("<q", data, 8, 0)
+                file.write_bytes(data)
+                aged += 1
+        assert aged == 40, aged
+        assert run("many", origin + "/slowish.jpg", 40, cache=str(stale)) == {"ready": 40, "failed": 0}
         # 12 images of 4 MiB against a 24 MiB budget: the 6 oldest unused go, the one in use stays.
         evicted = run("evict", origin + "/photo.jpg", 12)
         assert evicted == {"loaded": 12, "evicted": 6, "first": 2, "kept": True}, evicted

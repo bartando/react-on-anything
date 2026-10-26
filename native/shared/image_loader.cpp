@@ -790,8 +790,15 @@ private:
       return;
     }
     for (Transfer& t : transfers_) if (busy(t) && t.url == entry->url) { t.entries.push_back(std::move(entry)); return; }
-    ++counters.fetches;
     Transfer* t = begin(entry->url, false);
+    if (!t) {
+      // Every connection is taken: the load was counted as cached (the disk index has its URL) but
+      // the file was stale or unreadable. It waits for the next free one.
+      std::lock_guard lock(mutex_);
+      fetches_.push_back(std::move(entry));
+      return;
+    }
+    ++counters.fetches;
     t->entries.push_back(std::move(entry));
     if (!send(*t)) {
       for (const EntryPtr& e : t->entries) fail(e, "could not configure the HTTP transport");
@@ -803,9 +810,11 @@ private:
 
   static bool busy(const Transfer& t) { return t.warm || !t.entries.empty(); }
 
+  // A free transfer set up for `url`, or null when all of them are in flight.
   Transfer* begin(const std::string& url, bool warm) {
     Transfer* t = nullptr;
     for (Transfer& candidate : transfers_) if (!busy(candidate)) { t = &candidate; break; }
+    if (!t) return nullptr;
     t->url = url; t->body.clear(); t->overflow = t->out_of_memory = false; t->warm = warm;
     return t;
   }
@@ -823,6 +832,7 @@ private:
       if (cached(url) || disk_.has(url) || std::any_of(transfers_.begin(), transfers_.end(),
           [&](const Transfer& t) { return busy(t) && t.url == url; })) continue;
       Transfer* t = begin(url, true);
+      if (!t) return;
       if (!send(*t)) { t->warm = false; return; }
       ++active; ++warming;
       return;
