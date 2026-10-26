@@ -220,6 +220,16 @@ export const VirtualList = forwardRef(function VirtualList(props, ref) {
         list.unclaim = null;
       },
       step() {
+        if (!list.required) {
+          // No layout yet (a screen preloaded off stage): the initial rows fill now, a row a frame, so
+          // the screen's first visit does not mount them while it slides in.
+          if (list.filling.size) {
+            list.filling.delete(Math.min(...list.filling.keys()));
+            rerender();
+          }
+          if (!list.filling.size) list.stopStepping();
+          return;
+        }
         if (list.pending) list.focusPending();
         const columns = list.props.numColumns ?? 1;
         const batch = list.props.maxItemsPerFrame ?? 1;
@@ -274,6 +284,7 @@ export const VirtualList = forwardRef(function VirtualList(props, ref) {
   useLayoutEffect(() => {
     frame.listeners.add(list.update);
     const unsubscribe = manager.subscribe(list.update);
+    if (list.filling.size && !list.stepping) list.stepping = onFrame(list.step);
     return () => {
       frame.listeners.delete(list.update);
       unsubscribe();
