@@ -13,7 +13,7 @@ const offset = minutes => `UTC${minutes < 0 ? '-' : '+'}${Math.floor(Math.abs(mi
 function read() {
   return {
     platform: Platform.OS,
-    target: Platform.select({ps5: 'Console title', desktop: 'macOS preview'}),
+    target: Platform.select({ps5: 'Console title', switch: 'Homebrew NRO', android: 'Android TV app', desktop: 'macOS preview'}),
     device: DeviceInfo.get(),
     utcOffset: DeviceInfo.utcOffset(),
     foreground: Users.getForeground(),

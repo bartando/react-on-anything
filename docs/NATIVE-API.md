@@ -20,7 +20,8 @@ The modules in `runtime/js/native.js` wrap `globalThis.__roaNative`, which
 each host installs before the bundle runs. Its exact shape (ABI v15) is
 documented in [`native/shared/host_api.hpp`](../native/shared/host_api.hpp).
 `native/shared/host_api.cpp` implements the filesystem with POSIX and the object
-itself; `native/ps5/` and `native/desktop/` implement the platform functions.
+itself; `native/ps5/`, `native/switch/`, `native/android/` and `native/desktop/` implement the
+platform functions.
 
 - **Synchronous bridge.** Each native call returns directly. Networking calls
   only submit/cancel/poll bounded tasks; `Http.request` and `task.done` expose
@@ -44,8 +45,8 @@ itself; `native/ps5/` and `native/desktop/` implement the platform functions.
 
 | Member | Returns | Notes |
 | --- | --- | --- |
-| `Platform.OS` | `'ps5' \| 'desktop'` | The running host |
-| `Platform.select(spec)` | `spec[OS]`, else `spec.default` | Keys: `ps5`, `desktop`, `default` |
+| `Platform.OS` | `'ps5' \| 'switch' \| 'android' \| 'desktop'` | The running host |
+| `Platform.select(spec)` | `spec[OS]`, else `spec.default` | Keys: `ps5`, `switch`, `android`, `desktop`, `default` |
 
 ```js
 const label = Platform.select({ps5: 'Console', desktop: 'Preview', default: 'Unknown'});

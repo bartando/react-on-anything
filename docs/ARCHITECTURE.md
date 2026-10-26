@@ -8,19 +8,19 @@ apps/<app>/index.jsx                 application, state, components
 runtime/js (@react-on-anything/core)         focus navigation, controller API, native modules, primitives
             ↓ React reconciler / NativeUI / QuickJS
 Embedded React C                    tree, layout, text, rasterization
-            ↓ opaque ARGB8888 framebuffer
+            ↓ opaque ARGB8888 framebuffer, or drawing ops to native/shared/GpuRenderer (OpenGL ES)
 native/shared/GlPresenter           changed rows into a framebuffer texture, layers, presentation
             ↓
-native/desktop | native/ps5          window/EGL, input, clock, lifecycle,
-                                     native modules via native/shared/host_api
+native/desktop | ps5 | switch |     window/EGL, input, clock, lifecycle,
+  android                            native modules via native/shared/host_api
 ```
 
 Applications do not access scePad, EGL, libkernel, or the SDK directly. They
 reach platform services only through the `@react-on-anything/core` native modules
 (`runtime/js/native.js`), which wrap `globalThis.__roaNative`. Its shape is
 fixed by `native/shared/host_api.hpp`: `native/shared/host_api.cpp` installs it
-and implements the filesystem with POSIX, while `native/ps5/` and
-`native/desktop/` implement the platform functions. Calls are synchronous on the
+and implements the filesystem with POSIX, while `native/ps5/`,
+`native/switch/`, `native/android/` and `native/desktop/` implement the platform functions. Calls are synchronous on the
 render thread. Networking calls submit/cancel/poll bounded native tasks; two
 workers perform network and disk I/O without touching QuickJS or the engine.
 Remote images have two more workers (fetch and decode) that hand finished
@@ -116,7 +116,7 @@ Its UI components, themes, and UI renderer are not used.
 | --- | --- |
 | `apps/` | Independent JSX entry points, manifests, and assets |
 | `runtime/js/` | Public primitives, focus navigation, native modules, and host input contract |
-| `native/` | Shared presenter and desktop/PS5 hosts |
+| `native/` | Shared presenter and GPU renderer; desktop, PS5, Switch and Android TV hosts |
 | `tools/` | Bootstrap, bundle, `className` compiler, assets, builds, verification, CLI |
 | `docs/` | Decisions, evidence, limitations, provenance |
 

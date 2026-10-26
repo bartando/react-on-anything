@@ -2,9 +2,9 @@
 
 ## Project purpose
 
-React on Anything lets developers build standalone, fullscreen PS5 homebrew applications
-with React/JSX and controller input. Preserve a short path from JSX editing to
-native macOS preview and a PS5 application-folder build.
+React on Anything lets developers build standalone, fullscreen applications with
+React/JSX and controller or touch input, for the PS5, the Nintendo Switch and Android
+TV. Preserve a short path from JSX editing to native macOS preview and a console build.
 
 Read `README.md`, `CONTRIBUTING.md`, and the relevant files under `docs/` before
 changing architecture or platform behavior. Keep repository documentation,
@@ -15,12 +15,14 @@ comments, user-visible text, and commit messages in English.
 - `apps/<app>/`: application JSX, state, manifest, assets, and font configuration.
 - `runtime/js/`: public API and controller subscriptions.
 - `native/shared/`: platform-independent framebuffer presentation.
-- `native/desktop/` and `native/ps5/`: platform lifecycle, graphics context, and input.
+- `native/desktop/`, `native/ps5/`, `native/switch/` and `native/android/`: platform lifecycle,
+  graphics context, and input. A new host function is implemented in every host.
 - `tools/`: dependency bootstrap, bundling, asset baking, builds, and verification.
 
 React runs through QuickJS and Embedded React. The software backend rasterizes
-the UI; OpenGL presents the framebuffer as a texture. Do not describe this as
-direct GPU UI rendering or the complete official React Native runtime.
+the UI, or the GPU renderer (`native/shared/gpu_renderer.cpp`) replays the engine's
+drawing operations with OpenGL ES; OpenGL presents the result. Do not describe this
+as the complete official React Native runtime.
 
 Use ps5-homebrew-ui only for execution/platform infrastructure. Do not import its
 widgets, themes, or UI renderer. Do not introduce Sony RNPS hooks, replace system
@@ -72,7 +74,7 @@ other live-device operations require explicit task authorization.
 
 `native/shared/host_api.hpp` defines `globalThis.__roaNative` (its header names the ABI version);
 `runtime/js/native.js` is its only consumer and `docs/NATIVE-API.md` its public
-reference. Change all three together, implement every function on both hosts,
+reference. Change all three together, implement every function on every host,
 keep calls synchronous, cheap, and on the render thread, and throw errors that
 name the call and path. Apps use the `@react-on-anything/core` modules, never the global.
 Do not claim a call works on PS5 without evidence in `docs/HARDWARE.md`.

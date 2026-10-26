@@ -38,11 +38,11 @@ function host() {
  */
 
 export const Platform = {
-  /** @returns {'ps5' | 'desktop'} */
+  /** @returns {'ps5' | 'switch' | 'android' | 'desktop'} */
   get OS() { return host().platform; },
   /**
    * @template T
-   * @param {{ps5?: T, desktop?: T, default?: T}} spec
+   * @param {{ps5?: T, switch?: T, android?: T, desktop?: T, default?: T}} spec
    * @returns {T | undefined}
    */
   select(spec) {

@@ -11,7 +11,7 @@
 // render thread; the functions are synchronous and must return quickly.
 //
 // JavaScript shape (runtime/js/native.js wraps it):
-//   platform                       'ps5' | 'desktop'
+//   platform                       'ps5' | 'switch' | 'android' | 'desktop'
 //   fs.readDir(path)               [{name, isDirectory, isFile, size, modified, device, inode}]
 //   fs.stat(path)                  {name, isDirectory, isFile, size, modified, device, inode} | null
 //                                  device/inode are decimal strings, preserving 64-bit IDs
@@ -168,7 +168,7 @@ inline constexpr const char* kButtonNames[] = {
 };
 void roa_set_gamepad(const GamepadState& state);
 
-// Per platform (native/ps5/host_platform.cpp, native/desktop/host_platform.cpp).
+// Per platform (native/<platform>/host_platform.cpp).
 namespace host {
 const char* platform_name();
 // Maps an app path (/app0, /download0, /temp0, ...) to a real path. False rejects it.

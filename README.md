@@ -5,8 +5,9 @@
 <h1 align="center">React on Anything</h1>
 
 <p align="center">
-  <strong>React interfaces. Controller navigation. Standalone PS5 homebrew.</strong><br>
-  Write JSX, preview natively on macOS, and build a fullscreen application for PS5.
+  <strong>React interfaces. Controller navigation. One app on every screen.</strong><br>
+  Write JSX, preview natively on macOS, and build a fullscreen application for the PS5,
+  the Nintendo Switch and Android TV.
 </p>
 
 <p align="center">
@@ -17,10 +18,14 @@
   <a href="#documentation">Documentation</a>
 </p>
 
-React on Anything is an open-source framework for standalone console homebrew. React runs
-inside **QuickJS** through **Embedded React**. The software renderer draws the
-interface into a framebuffer; **OpenGL presents that framebuffer** on screen.
-The application runs in its own native host, without a browser or Sony RNPS hooks.
+React on Anything is an open-source framework for standalone fullscreen apps on consoles
+and TVs. React runs inside **QuickJS** through **Embedded React**, in a native host per
+platform: the PS5 (homebrew payload), the Nintendo Switch (homebrew NRO), Android TV
+(APK) and macOS (the desktop preview). The interface is drawn by the software renderer
+into a framebuffer, or by the **GPU renderer** with OpenGL ES; **OpenGL presents it** on
+screen. There is no browser, and on the PS5 no Sony RNPS hooks.
+
+It started as [PS5 React](https://github.com/half144/ps5-react) by half144.
 
 **Status: experimental v0.1.0.** The original proof of concept and a specific
 System Explorer filesystem integration were user-confirmed on firmware 13.60
