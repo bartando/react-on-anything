@@ -66,6 +66,8 @@ public:
   // Sets the environment from an options file of KEY=VALUE lines (# comments), logging each: how the
   // Switch and Android take options, having no shell to launch from.
   static void load_env_file(const char* path, void (*log)(const char* line));
+  // One KEY=VALUE option into the environment, logged; anything else is ignored.
+  static void set_env_option(const std::string& line, void (*log)(const char* line));
 
   // With the GL context current and `presenter` initialized: the software framebuffer and damage
   // tracking, the presenter's layers, the render workers, and the GPU renderer or the canvas trace as

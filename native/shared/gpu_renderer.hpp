@@ -84,6 +84,8 @@ private:
     // time the engine's commits spent handing ops over (record()).
     std::uint64_t submit_us = 0, finish_us = 0, max_finish_us = 0, record_us = 0;
     std::uint64_t batches = 0;  // the instanced calls the draws went out in
+    std::uint64_t breaks[7] = {};  // why each ended (kBreakNames)
+    std::uint64_t flush_us = 0, group_us = 0;  // in the calls, and in starting groups
     // Time spent in the driver creating and filling textures, by kind (images, glyphs, CPU-drawn pixels).
     std::uint64_t upload_us[3] = {}, max_upload_us[3] = {}, upload_count[3] = {}, upload_bytes[3] = {};
     std::uint64_t capture_px[ER_CANVAS_OP_COUNT] = {}, captures[ER_CANVAS_OP_COUNT] = {};
@@ -107,9 +109,20 @@ private:
   std::vector<Op>* ops_ = nullptr;
   std::vector<std::pair<const void*, Group>> groups_;
   std::vector<std::uint64_t> missing_;
-  struct Glyph { unsigned int texture = 0; int width = 0, height = 0; };
+  struct Glyph { unsigned int texture = 0; int x = 0, y = 0, width = 0, height = 0; };
+  static constexpr int kGlyphPage = 2048;
+  std::vector<unsigned int> glyph_pages_;
+  unsigned int page_ = 0;  // the page being filled
+  int shelf_x_ = 0, shelf_y_ = 0, shelf_h_ = 0;
+  Glyph place_glyph(int w, int h);
+  std::vector<unsigned int> doomed_;  // textures to delete once the replay's draws are queued
   std::unordered_map<const void*, Glyph> glyphs_;
   struct Image { unsigned int texture = 0; int width = 0, height = 0, format = 0; std::string name; };
+  // Images go to their textures through the staging buffer (see kCopyFragment), by copy_program_ into
+  // copy_fbo_.
+  unsigned int staging_buffer_ = 0, staging_texture_ = 0, copy_fbo_ = 0, copy_program_ = 0;
+  int staging_texels_ = 0;
+  int range_align_ = 0;  // with GL 4.3, the alignment of a batch's view of the records; 0 binds them all
   std::unordered_map<const void*, Image> images_;
 
   static int record(const ERCanvasOp* op, void* self);
@@ -122,6 +135,7 @@ private:
   const Glyph& glyph(const void* bitmap, int w, int h, int bpp);
   const Image& image(const void* pixels, const char* name, int w, int h, int format);
   void note_upload(int kind, std::uint64_t us, std::uint64_t bytes);
+  void copy_in(unsigned int texture, int w, int h, const void* pixels);
   void draw_ops();
   struct Uniform { int location; int bytes; std::uint8_t value[64]; };
   std::vector<Uniform> uniforms_;

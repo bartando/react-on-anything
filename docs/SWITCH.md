@@ -22,6 +22,7 @@ app's data is on the SD card:
 | --- | --- |
 | `sdmc:/switch/<app>/sandbox/` | `/app0`, `/download0`, `/temp0` resolve here |
 | `sdmc:/switch/<app>/options.env` | `KEY=VALUE` lines set before boot |
+| `nxlink -a <address> -s <app>.nro KEY=VALUE ...` | the same options for one run, on top of the file's |
 
 Options: `ROA_GPU=0` draws with the software rasterizer, `ROA_LAYOUT=720` or `1080` picks a
 layout whatever the screen, `ROA_BOOST=0` leaves the clocks alone, `ROA_INPUT_SCRIPT` runs a

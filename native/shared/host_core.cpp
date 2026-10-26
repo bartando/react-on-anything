@@ -75,13 +75,16 @@ void HostCore::load_env_file(const char* path, void (*log)(const char* line)) {
   for (char text[1024]; std::fgets(text, sizeof text, file);) {
     std::string line = text;
     while (!line.empty() && (line.back() == '\n' || line.back() == '\r')) line.pop_back();
-    if (line.empty() || line[0] == '#') continue;
-    const std::size_t equals = line.find('=');
-    if (equals == std::string::npos) continue;
-    setenv(line.substr(0, equals).c_str(), line.substr(equals + 1).c_str(), 1);
-    log(("[ROA] option " + line).c_str());
+    if (!line.empty() && line[0] != '#') set_env_option(line, log);
   }
   std::fclose(file);
+}
+
+void HostCore::set_env_option(const std::string& line, void (*log)(const char* line)) {
+  const std::size_t equals = line.find('=');
+  if (equals == std::string::npos || equals == 0) return;
+  setenv(line.substr(0, equals).c_str(), line.substr(equals + 1).c_str(), 1);
+  log(("[ROA] option " + line).c_str());
 }
 
 void HostCore::logf(const char* format, ...) {

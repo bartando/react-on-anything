@@ -12,6 +12,19 @@
 
 ## Unreleased — an Android TV host
 
+- The GPU renderer draws the PS5's UI, and sends draws in a row as instances of one call: the PS5's GL
+  charges about 80us a call whatever it draws, so a hero crossfade's 1,300 draws took 97ms. A draw's
+  parameters are a record in a buffer texture; text reads glyphs from shared atlas pages, and images are
+  copied to their textures by the GPU from a staging buffer (0.3ms a poster, where the driver took 5.7ms
+  to lay one out on the CPU). A batch binds only its own records: that GL charges a draw ~35us for each MB
+  of buffers bound. On the PS5 a page switch or a scroll holds 58 to 60 fps at 4K, drawing in 3 to 5ms
+  on one core where the software rasterizer took 13 to 24ms across eight; the Switch draws its idle home
+  screen in 0.3ms. `dev/gpu.txt` holding 0 draws in software, 2 waits for the GPU each frame and reports
+  it; the 2s stats line says why each call ended.
+
+- On the Switch, nxlink's arguments after the NRO (`KEY=VALUE`) set options for one run, on top of
+  `options.env`.
+
 - `native/switch` runs an app on a Nintendo Switch with custom firmware, as a homebrew NRO drawing with
   the GPU renderer through Mesa's GLES 3.2, and `tools/switch.py` builds it and pushes it to the Homebrew
   Menu's netloader (docs/SWITCH.md). It lays the app out at 720p on the console and 1080p docked, raises

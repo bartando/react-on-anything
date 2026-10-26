@@ -10,7 +10,8 @@
 // frames. The bundles come from the NRO's RomFS (romfs:/<width>x<height>/app.bundle.js, romfs:/fonts/), so
 // one nxlink push deploys everything (tools/switch.py). The app's data lives on the SD card:
 //   sdmc:/switch/<app>/sandbox/{app0,download0,temp0}
-// and sdmc:/switch/<app>/options.env, KEY=VALUE lines set in the environment before boot, as on Android.
+// and sdmc:/switch/<app>/options.env, KEY=VALUE lines set in the environment before boot, as on Android; nxlink's
+// arguments after the NRO add to them for one run.
 // Launched by nxlink, stdout goes back to it.
 #include "host_platform.hpp"
 #include "gl_api.hpp"
@@ -271,7 +272,7 @@ struct Host {
 };
 } // namespace
 
-int main(int, char**) {
+int main(int argc, char** argv) {
   // Larger socket buffers than the default, for streaming video and parallel image loads.
   SocketInitConfig sockets = *socketGetDefaultInitConfig();
   sockets.tcp_rx_buf_size = 0x40000;
@@ -287,6 +288,8 @@ int main(int, char**) {
     mkdir(dir.c_str(), 0755);
   switch_set_root(sandbox.c_str());
   HostCore::load_env_file((data + "/options.env").c_str(), log_line);
+  // nxlink's arguments after the NRO, KEY=VALUE each, on top of the file's.
+  for (int i = 1; i < argc; ++i) HostCore::set_env_option(argv[i], log_line);
   // ROA_LAYOUT=720 or 1080 picks one whatever the screen.
   const bool docked = appletGetOperationMode() == AppletOperationMode_Console;
   const char* forced = std::getenv("ROA_LAYOUT");

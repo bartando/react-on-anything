@@ -73,7 +73,15 @@ std::mutex record_lock;
 // to cover, already cut to the clip rect; 1 holds the kind, the alpha, the rounded clips (an offset into
 // the batch's clip sets, or -1) and the texture unit; the rest are the kind's own (see draw_ops).
 constexpr int kRecord = 11;
-constexpr int kUnits = 8;
+// Why a batch ended, for the stats.
+enum Break { kBreakBlend, kBreakTextures, kBreakFull, kBreakGroup, kBreakClear, kBreakCopy, kBreakEnd, kBreakKinds };
+constexpr const char* kBreakNames[kBreakKinds] = {"blend", "textures", "full", "group", "clear", "copy", "end"};
+// Texture units: a batch's textures on 0 to kUnits - 1, the records on the next, an image being copied in
+// on the one after. GL promises 16.
+constexpr int kUnits = 14;
+constexpr int kRecordsUnit = kUnits;
+constexpr int kStagingUnit = kUnits + 1;
+constexpr int kStagingTexels = 1 << 20;  // 4MB, at most what a buffer texture holds on the PS5
 
 constexpr const char* kVertex = R"(
 uniform vec2 u_size;
@@ -106,6 +114,12 @@ uniform sampler2D u_tex4;
 uniform sampler2D u_tex5;
 uniform sampler2D u_tex6;
 uniform sampler2D u_tex7;
+uniform sampler2D u_tex8;
+uniform sampler2D u_tex9;
+uniform sampler2D u_tex10;
+uniform sampler2D u_tex11;
+uniform sampler2D u_tex12;
+uniform sampler2D u_tex13;
 flat in int v_record;
 out vec4 frag;
 const float kPi = 3.14159265;
@@ -142,7 +156,13 @@ vec4 fetch(ivec2 p) {
     case 4: return texelFetch(u_tex4, p, 0);
     case 5: return texelFetch(u_tex5, p, 0);
     case 6: return texelFetch(u_tex6, p, 0);
-    default: return texelFetch(u_tex7, p, 0);
+    case 7: return texelFetch(u_tex7, p, 0);
+    case 8: return texelFetch(u_tex8, p, 0);
+    case 9: return texelFetch(u_tex9, p, 0);
+    case 10: return texelFetch(u_tex10, p, 0);
+    case 11: return texelFetch(u_tex11, p, 0);
+    case 12: return texelFetch(u_tex12, p, 0);
+    default: return texelFetch(u_tex13, p, 0);
   }
 }
 
@@ -279,9 +299,10 @@ vec4 shape(vec2 c, int mode) {
 }
 
 // Images. Record 2 is (shift, source size); then a transform's matrix (ia ib ic id, itx ity); a glyph's
-// colour and italic mode; an image region's destination, source part, tint (rgb 0..255, a = 1 when
-// tinted), and the box a rounded image is cut to with its radii.
+// colour, and its italic mode and place in its atlas page; an image region's destination, source part,
+// tint (rgb 0..255, a = 1 when tinted), and the box a rounded image is cut to with its radii.
 vec2 g_shift, g_src_size;
+ivec2 g_atlas;
 // One axis of the software scaler: the source position of destination pixel d, clamped to the region,
 // as two texels and an 8-bit weight.
 ivec3 axis(float start, float len, float dst_len, int d) {
@@ -297,7 +318,7 @@ vec4 lerp8(vec4 a, vec4 b, int f) {
 }
 float cov(int d, int row) {
   if (d < 0 || float(d) >= g_src_size.x) return 0.0;
-  return fetch(ivec2(d, row)).r;
+  return fetch(ivec2(d, row) + g_atlas).r;
 }
 vec4 tap(ivec2 t) {
   if (t.x < 0 || t.y < 0 || float(t.x) >= g_src_size.x || float(t.y) >= g_src_size.y) return vec4(0.0);
@@ -324,7 +345,9 @@ vec4 image(vec2 c, int kind) {
   if (kind == 2) {
     // A glyph's coverage times its colour; italic shears each row right by (height - 1 - row) * 0.2,
     // the fraction split between two columns as the software path does (the 1-bit path drops it).
-    int italic = int(rec(4).x);
+    vec4 glyph = rec(4);
+    int italic = int(glyph.x);
+    g_atlas = ivec2(glyph.yz);
     ivec2 local = ivec2(s - g_shift);
     if (local.y < 0 || float(local.y) >= g_src_size.y) discard;
     float shift = italic != 0 ? (g_src_size.y - 1.0 - float(local.y)) * 0.2 : 0.0;
@@ -356,6 +379,30 @@ void main() {
 }
 )";
 
+// Copies an image into its texture: rows [u_rows.x, u_rows.y) of a w-wide target, read from a buffer of
+// premultiplied ARGB words (B, G, R, A bytes) that starts at row u_rows.x. The PS5's GL lays a texture out
+// on the CPU as it uploads, 5.7ms for a poster; into a buffer the same bytes take 0.1ms, and the GPU makes
+// the texture of them in a draw.
+constexpr const char* kCopyVertex = R"(
+uniform vec2 u_rows;
+uniform vec2 u_size;
+void main() {
+  vec2 corner = vec2(float(gl_VertexID & 1), float(gl_VertexID >> 1));
+  float y = mix(u_rows.x, u_rows.y, corner.y);
+  gl_Position = vec4(corner.x * 2.0 - 1.0, y / u_size.y * 2.0 - 1.0, 0.0, 1.0);
+}
+)";
+constexpr const char* kCopyFragment = R"(
+uniform samplerBuffer u_staging;
+uniform vec2 u_rows;
+uniform int u_width;
+out vec4 frag;
+void main() {
+  ivec2 p = ivec2(gl_FragCoord.xy);
+  frag = texelFetch(u_staging, (p.y - int(u_rows.x)) * u_width + p.x).bgra;
+}
+)";
+
 GLuint compile(GLenum type, const std::string& source) {
   GLuint shader = glCreateShader(type);
   const char* text = source.c_str();
@@ -373,10 +420,10 @@ GLuint compile(GLenum type, const std::string& source) {
   return shader;
 }
 
-GLuint link() {
+GLuint link_program(const char* vertex_body, const char* fragment_body) {
   const std::string prelude = std::string(GLSL_VERSION) + "const int kRecord = " + std::to_string(kRecord) + ";\n";
-  GLuint vertex = compile(GL_VERTEX_SHADER, prelude + kVertex);
-  GLuint fragment = compile(GL_FRAGMENT_SHADER, prelude + kFragment);
+  GLuint vertex = compile(GL_VERTEX_SHADER, prelude + vertex_body);
+  GLuint fragment = compile(GL_FRAGMENT_SHADER, prelude + fragment_body);
   if (!vertex || !fragment) return 0;
   GLuint program = glCreateProgram();
   glAttachShader(program, vertex);
@@ -470,8 +517,9 @@ bool GpuRenderer::start(int width, int height, Mode mode) {
   mode_ = mode;
   width_ = width;
   height_ = height;
-  program_ = link();
-  if (!program_) return false;
+  program_ = link_program(kVertex, kFragment);
+  copy_program_ = link_program(kCopyVertex, kCopyFragment);
+  if (!program_ || !copy_program_) return false;
   glGenVertexArrays(1, &vao_);
   GLint most = 0;
   glGetIntegerv(GL_MAX_TEXTURE_BUFFER_SIZE, &most);
@@ -486,6 +534,18 @@ bool GpuRenderer::start(int width, int height, Mode mode) {
   glBindTexture(GL_TEXTURE_BUFFER, 0);
   glBindBuffer(GL_TEXTURE_BUFFER, 0);
   buffer_at_ = 0;
+  staging_texels_ = std::min(static_cast<int>(most), kStagingTexels);
+  glGenBuffers(1, &staging_buffer_);
+  glGenTextures(1, &staging_texture_);
+  glGenFramebuffers(1, &copy_fbo_);
+#if !GL_ES_HOST && defined(GL_TEXTURE_BUFFER_OFFSET_ALIGNMENT)
+  // GL 4.3 binds the records a batch reads, not the whole buffer: the PS5's GL charges a draw ~35us for
+  // each MB of buffers bound.
+  GLint major = 0, minor = 0;
+  glGetIntegerv(GL_MAJOR_VERSION, &major);
+  glGetIntegerv(GL_MINOR_VERSION, &minor);
+  if (major > 4 || (major == 4 && minor >= 3)) glGetIntegerv(GL_TEXTURE_BUFFER_OFFSET_ALIGNMENT, &range_align_);
+#endif
   if (!make_target(width, height, target_.texture, target_.fbo) ||
       !make_target(width, height, copy_.texture, copy_.fbo))
     return false;
@@ -506,10 +566,20 @@ void GpuRenderer::stop() {
   free_target(screen_.texture, screen_.fbo);
   for (auto& [buffer, group] : groups_) free_target(group.target.texture, group.target.fbo);
   groups_.clear();
-  for (auto& [bitmap, g] : glyphs_) glDeleteTextures(1, &g.texture);
   glyphs_.clear();
-  for (auto& [pixels, img] : images_) glDeleteTextures(1, &img.texture);
+  if (!glyph_pages_.empty()) glDeleteTextures(static_cast<GLsizei>(glyph_pages_.size()), glyph_pages_.data());
+  glyph_pages_.clear();
+  page_ = 0;
+  shelf_x_ = shelf_y_ = shelf_h_ = 0;
+  for (auto& [pixels, img] : images_)
+    if (img.texture) glDeleteTextures(1, &img.texture);
   images_.clear();
+  if (staging_texture_) glDeleteTextures(1, &staging_texture_);
+  if (staging_buffer_) glDeleteBuffers(1, &staging_buffer_);
+  if (copy_fbo_) glDeleteFramebuffers(1, &copy_fbo_);
+  if (copy_program_) glDeleteProgram(copy_program_);
+  staging_texture_ = staging_buffer_ = copy_fbo_ = copy_program_ = 0;
+  range_align_ = 0;
   for (auto& [hash, kept] : pixels_) glDeleteTextures(1, &kept.texture);
   pixels_.clear();
   pixels_bytes_ = 0;
@@ -685,7 +755,39 @@ std::uint64_t elapsed_us(std::chrono::steady_clock::time_point since) {
 }
 } // namespace
 
-// A baked glyph's coverage as an 8-bit texture, unpacked once from its 1, 2, 4 or 8 bits per pixel.
+// Room for a w x h glyph in an atlas page, rows of glyphs filled left to right, a new page when one is
+// full: text reads a few textures instead of one per glyph, so it does not end batches. A glyph past a
+// page's size gets one of its own.
+GpuRenderer::Glyph GpuRenderer::place_glyph(int w, int h) {
+  auto page = [](int width, int height) {
+    unsigned int texture = 0;
+    glGenTextures(1, &texture);
+    glBindTexture(GL_TEXTURE_2D, texture);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_R8, width, height, 0, GL_RED, GL_UNSIGNED_BYTE, nullptr);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    return texture;
+  };
+  if (w > kGlyphPage || h > kGlyphPage) {
+    glyph_pages_.push_back(page(w, h));
+    return {glyph_pages_.back(), 0, 0, w, h};
+  }
+  if (shelf_x_ + w > kGlyphPage) {
+    shelf_y_ += shelf_h_;
+    shelf_x_ = shelf_h_ = 0;
+  }
+  if (!page_ || shelf_y_ + h > kGlyphPage) {
+    page_ = page(kGlyphPage, kGlyphPage);
+    glyph_pages_.push_back(page_);
+    shelf_x_ = shelf_y_ = shelf_h_ = 0;
+  }
+  const Glyph g{page_, shelf_x_, shelf_y_, w, h};
+  shelf_x_ += w + 1;
+  shelf_h_ = std::max(shelf_h_, h + 1);
+  return g;
+}
+
+// A baked glyph's coverage as 8 bits a pixel in an atlas page, unpacked once from its 1, 2, 4 or 8 bits.
 const GpuRenderer::Glyph& GpuRenderer::glyph(const void* bitmap, int w, int h, int bpp) {
   auto found = glyphs_.find(bitmap);
   if (found != glyphs_.end()) return found->second;
@@ -704,16 +806,13 @@ const GpuRenderer::Glyph& GpuRenderer::glyph(const void* bitmap, int w, int h, i
     }
   }
   const auto upload_began = std::chrono::steady_clock::now();
-  Glyph g{0, w, h};
-  glGenTextures(1, &g.texture);
+  Glyph g = place_glyph(w, h);
   glBindTexture(GL_TEXTURE_2D, g.texture);
   glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
   stats_.uploads++;
-  glTexImage2D(GL_TEXTURE_2D, 0, GL_R8, w, h, 0, GL_RED, GL_UNSIGNED_BYTE, coverage.data());
+  glTexSubImage2D(GL_TEXTURE_2D, 0, g.x, g.y, w, h, GL_RED, GL_UNSIGNED_BYTE, coverage.data());
   note_upload(kUploadGlyph, elapsed_us(upload_began), static_cast<std::uint64_t>(w) * h);
   glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
   return glyphs_.emplace(bitmap, g).first->second;
 }
 
@@ -724,14 +823,46 @@ void GpuRenderer::note_upload(int kind, std::uint64_t us, std::uint64_t bytes) {
   stats_.upload_bytes[kind] += bytes;
 }
 
-// An image's pixels as a texture, uploaded once per buffer (premultiplied ARGB8888, or RGB565).
+// Premultiplied ARGB8888 pixels into the bound texture: through the staging buffer, a band of rows at a
+// time, drawn into the texture by the GPU. Leaves the framebuffer, program and viewport changed.
+void GpuRenderer::copy_in(unsigned int texture, int w, int h, const void* pixels) {
+  const int rows = staging_texels_ / w;
+  glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+  glBindFramebuffer(GL_FRAMEBUFFER, copy_fbo_);
+  glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texture, 0);
+  glViewport(0, 0, w, h);
+  glDisable(GL_BLEND);
+  glUseProgram(copy_program_);
+  set_i(copy_program_, "u_staging", kStagingUnit);
+  set_i(copy_program_, "u_width", w);
+  set_f(copy_program_, "u_size", {static_cast<float>(w), static_cast<float>(h)});
+  glActiveTexture(GL_TEXTURE0 + kStagingUnit);
+  glBindTexture(GL_TEXTURE_BUFFER, staging_texture_);
+  for (int first = 0; first < h; first += rows) {
+    const int count = std::min(rows, h - first);
+    // Fresh storage each band: the driver keeps the old while a queued copy reads it.
+    glBindBuffer(GL_COPY_WRITE_BUFFER, staging_buffer_);
+    glBufferData(GL_COPY_WRITE_BUFFER, static_cast<GLsizeiptr>(count) * w * 4,
+                 static_cast<const std::uint32_t*>(pixels) + static_cast<std::size_t>(first) * w, GL_STREAM_DRAW);
+    glBindBuffer(GL_COPY_WRITE_BUFFER, 0);
+    glTexBuffer(GL_TEXTURE_BUFFER, GL_RGBA8, staging_buffer_);
+    set_f(copy_program_, "u_rows", {static_cast<float>(first), static_cast<float>(first + count)});
+    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+  }
+  glActiveTexture(GL_TEXTURE0);
+  glEnable(GL_BLEND);
+}
+
+// An image's pixels as a texture, copied once per buffer: premultiplied ARGB8888 by copy_in(), RGB565
+// uploaded as GL takes it. Leaves the framebuffer, program and viewport changed when it copies
+// (`stats_.uploads` grows).
 const GpuRenderer::Image& GpuRenderer::image(const void* pixels, const char* name, int w, int h, int format) {
   auto found = images_.find(pixels);
   if (found != images_.end()) {
     Image& kept = found->second;
     // A buffer freed and reused for another image: upload again.
     if (kept.width == w && kept.height == h && kept.format == format && kept.name == (name ? name : "")) return kept;
-    glDeleteTextures(1, &kept.texture);
+    doomed_.push_back(kept.texture);  // a queued draw may still read it
     images_.erase(found);
   }
   stats_.uploads++;
@@ -739,14 +870,14 @@ const GpuRenderer::Image& GpuRenderer::image(const void* pixels, const char* nam
   Image img{0, w, h, format, name ? name : ""};
   glGenTextures(1, &img.texture);
   glBindTexture(GL_TEXTURE_2D, img.texture);
-  if (format == ER_IMG_RGB565) {
-    glPixelStorei(GL_UNPACK_ALIGNMENT, 2);
-    gl::tex_image_rgb565(w, h, pixels);
-  } else {
+  if (format == ER_IMG_RGB565 || w <= 0 || w > staging_texels_) {
+    glPixelStorei(GL_UNPACK_ALIGNMENT, format == ER_IMG_RGB565 ? 2 : 4);
+    if (format == ER_IMG_RGB565) gl::tex_image_rgb565(w, h, pixels);
+    else gl::tex_image_argb(w, h, pixels);
     glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
-    gl::tex_image_argb(w, h, pixels);
+  } else {
+    copy_in(img.texture, w, h, pixels);
   }
-  glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
   note_upload(kUploadImage, elapsed_us(upload_began),
@@ -781,6 +912,8 @@ bool GpuRenderer::replay() {
   const bool drew = !ops_->empty();
   if (drew) {
     draw_ops();
+    if (!doomed_.empty()) glDeleteTextures(static_cast<GLsizei>(doomed_.size()), doomed_.data());
+    doomed_.clear();
     const auto submitted = std::chrono::steady_clock::now();
     stats_.submit_us += static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(submitted - began).count());
     if (sync_) {
@@ -811,11 +944,21 @@ bool GpuRenderer::replay() {
                       std::to_string(stats_.max_finish_us / 1000.0).substr(0, 5)).c_str() : "",
              stats_.record_us / n / 1000.0, stats_.ops / n, stats_.draws / n, stats_.batches / n, stats_.regroups / n,
              stats_.pixel_ops / n, stats_.pixel_bytes / n / 1024.0, stats_.uploads / n);
+    if (stats_.batches) {
+      char line[256];
+      int at = 0;
+      for (int reason = 0; reason < kBreakKinds; reason++)
+        if (stats_.breaks[reason])
+          at += std::snprintf(line + at, sizeof line - at, " %s %.1f", kBreakNames[reason], stats_.breaks[reason] / n);
+      log_line("[ROA] gpu:   calls end per replay at:%s; calls %.2fms, groups %.2fms a replay", line,
+               stats_.flush_us / n / 1000.0, stats_.group_us / n / 1000.0);
+    }
     constexpr const char* kUploadNames[] = {"images", "glyphs", "pixels"};
     for (int kind = 0; kind < 3; kind++)
       if (stats_.upload_count[kind])
         log_line("[ROA] gpu:   upload %s: %llu, %.0fKB, %.1fms total, %.1fms max", kUploadNames[kind],
-                    static_cast<unsigned long long>(stats_.upload_count[kind]), stats_.upload_bytes[kind] / 1024.0,
+                 static_cast<unsigned long long>(stats_.upload_count[kind]),
+                 stats_.upload_bytes[kind] / 1024.0,
                     stats_.upload_us[kind] / 1000.0, stats_.max_upload_us[kind] / 1000.0);
     for (int kind = 0; kind < ER_CANVAS_OP_COUNT; kind++)
       if (stats_.captures[kind])
@@ -845,17 +988,18 @@ void GpuRenderer::draw_ops() {
   glEnable(GL_BLEND);
   glDisable(GL_SCISSOR_TEST);
   glUseProgram(program_);
-  constexpr const char* kTextureNames[kUnits] = {"u_tex0", "u_tex1", "u_tex2", "u_tex3",
-                                                 "u_tex4", "u_tex5", "u_tex6", "u_tex7"};
+  constexpr const char* kTextureNames[kUnits] = {"u_tex0", "u_tex1", "u_tex2",  "u_tex3",  "u_tex4",
+                                                 "u_tex5", "u_tex6", "u_tex7",  "u_tex8",  "u_tex9",
+                                                 "u_tex10", "u_tex11", "u_tex12", "u_tex13"};
   for (int unit = 0; unit < kUnits; unit++) set_i(program_, kTextureNames[unit], unit);
-  set_i(program_, "u_records", kUnits);
-  glActiveTexture(GL_TEXTURE0 + kUnits);
+  set_i(program_, "u_records", kRecordsUnit);
+  glActiveTexture(GL_TEXTURE0 + kRecordsUnit);
   glBindTexture(GL_TEXTURE_BUFFER, records_texture_);
   glActiveTexture(GL_TEXTURE0);
   glBindBuffer(GL_TEXTURE_BUFFER, records_buffer_);
 
   // The batch: the draws since the last flush, their records and rounded clips, and the textures they read.
-  // A blend change, a target change, a clear or a copy ends it; so does a ninth texture.
+  // A blend change, a target change, a clear or a copy ends it; so does a texture past kUnits.
   std::vector<float>& staged = staged_;
   std::vector<float>& clip_sets = clip_sets_;
   staged.clear();
@@ -869,8 +1013,10 @@ void GpuRenderer::draw_ops() {
     glBindFramebuffer(GL_FRAMEBUFFER, b.target->fbo);
     glViewport(0, 0, b.target->width, b.target->height);
   };
-  auto flush = [&]() {
+  auto flush = [&](int reason) {
     if (!draws) return;
+    stats_.breaks[reason]++;
+    const auto flush_began = std::chrono::steady_clock::now();
     const int record_texels = draws * kRecord;
     const int texels = record_texels + static_cast<int>(clip_sets.size() / 4);
     // A full buffer is orphaned: the driver gives fresh storage while the GPU reads the old.
@@ -881,11 +1027,24 @@ void GpuRenderer::draw_ops() {
     staged.insert(staged.end(), clip_sets.begin(), clip_sets.end());
     glBufferSubData(GL_TEXTURE_BUFFER, static_cast<GLintptr>(buffer_at_) * 16,
                     static_cast<GLsizeiptr>(staged.size() * sizeof(float)), staged.data());
+    int first = buffer_at_;
+#if !GL_ES_HOST && defined(GL_TEXTURE_BUFFER_OFFSET_ALIGNMENT)
+    if (range_align_ > 0) {
+      // The view starts on an aligned texel at or before the batch's first.
+      const int align = std::max(1, range_align_ / 16);
+      const int start = buffer_at_ / align * align;
+      first = buffer_at_ - start;
+      glActiveTexture(GL_TEXTURE0 + kRecordsUnit);
+      glTexBufferRange(GL_TEXTURE_BUFFER, GL_RGBA32F, records_buffer_, static_cast<GLintptr>(start) * 16,
+                       static_cast<GLsizeiptr>(first + texels) * 16);
+      glActiveTexture(GL_TEXTURE0);
+    }
+#endif
     const Bound& b = targets.back();
     set_f(program_, "u_size", {static_cast<float>(b.target->width), static_cast<float>(b.target->height)});
     set_f(program_, "u_origin", {static_cast<float>(b.ox), static_cast<float>(b.oy)});
-    set_i(program_, "u_first", buffer_at_);
-    set_i(program_, "u_clip_first", buffer_at_ + record_texels);
+    set_i(program_, "u_first", first);
+    set_i(program_, "u_clip_first", first + record_texels);
     for (int unit = unit_count - 1; unit >= 0; unit--) {
       glActiveTexture(GL_TEXTURE0 + unit);
       glBindTexture(GL_TEXTURE_2D, units[unit]);
@@ -895,6 +1054,7 @@ void GpuRenderer::draw_ops() {
     blend_set = batch_blend;
     glDrawArraysInstanced(GL_TRIANGLE_STRIP, 0, 4, draws);
     stats_.batches++;
+    stats_.flush_us += elapsed_us(flush_began);
     buffer_at_ += texels;
     staged.clear();
     clip_sets.clear();
@@ -934,13 +1094,14 @@ void GpuRenderer::draw_ops() {
     }
     if (w <= 0 || h <= 0) return nullptr;
     const int wanted = blend == ER_BLEND_ADD ? ER_BLEND_ADD : 0;
-    if (draws && (wanted != batch_blend || draws == kBatchDraws)) flush();
+    if (draws && wanted != batch_blend) flush(kBreakBlend);
+    if (draws == kBatchDraws) flush(kBreakFull);
     batch_blend = wanted;
     int unit = 0;
     if (texture) {
       while (unit < unit_count && units[unit] != texture) unit++;
       if (unit == kUnits) {
-        flush();
+        flush(kBreakTextures);
         unit = 0;
       }
       if (unit == unit_count) units[unit_count++] = texture;
@@ -1046,7 +1207,7 @@ void GpuRenderer::draw_ops() {
         Clip c{op.x, op.y, op.w, op.h, false, {}, 0, 0, 0, 0, false};
         clip_to_top(c);
         if (c.w <= 0 || c.h <= 0) break;
-        flush();
+        flush(kBreakClear);
         const Bound& b = targets.back();
         glEnable(GL_SCISSOR_TEST);
         glScissor(c.x - b.ox, c.y - b.oy, c.w, c.h);
@@ -1086,7 +1247,8 @@ void GpuRenderer::draw_ops() {
         blend = op.mode;
         break;
       case ER_CANVAS_GROUP_BEGIN: {
-        flush();
+        flush(kBreakGroup);
+        const auto began = std::chrono::steady_clock::now();
         Group& g = group(op.buffer, op.w, op.h);
         g.ox = op.x;
         g.oy = op.y;
@@ -1094,10 +1256,11 @@ void GpuRenderer::draw_ops() {
         bind();
         glClearColor(0, 0, 0, 0);
         glClear(GL_COLOR_BUFFER_BIT);
+        stats_.group_us += elapsed_us(began);
         break;
       }
       case ER_CANVAS_GROUP_END:
-        flush();
+        flush(kBreakGroup);
         if (targets.size() > 1) targets.pop_back();
         bind();
         break;
@@ -1162,7 +1325,13 @@ void GpuRenderer::draw_ops() {
         break;
       }
       case ER_CANVAS_IMAGE_REGION: {
+        const std::uint64_t uploads = stats_.uploads;
         const Image& img = image(op.buffer, op.name, op.slot, op.width, op.mode);
+        if (stats_.uploads != uploads) {
+          // The copy drew elsewhere: back to the target and the program.
+          bind();
+          glUseProgram(program_);
+        }
         float* r = draw(13, op.x, op.y, op.w, op.h, img.texture, alpha);
         if (!r) break;
         put(r, {0, 0, static_cast<float>(img.width), static_cast<float>(img.height)});
@@ -1191,7 +1360,7 @@ void GpuRenderer::draw_ops() {
         put(r, {static_cast<float>(op.x), static_cast<float>(op.y), static_cast<float>(g.width),
                 static_cast<float>(g.height)});
         put_color(r, op.argb);
-        put(r, {op.f[0] == 0.0f ? 0.0f : op.mode == 1 ? 1.0f : 2.0f, 0, 0, 0});
+        put(r, {op.f[0] == 0.0f ? 0.0f : op.mode == 1 ? 1.0f : 2.0f, static_cast<float>(g.x), static_cast<float>(g.y), 0});
         break;
       }
       case ER_CANVAS_GROUP_KEEP: {
@@ -1199,7 +1368,7 @@ void GpuRenderer::draw_ops() {
         for (const auto& [key, g] : groups_)
           if (key == op.source) from = &g;
         if (!from || op.w <= 0 || op.h <= 0) break;
-        flush();
+        flush(kBreakCopy);
         const Target source = from->target;
         Group& kept = group(op.buffer, source.width, source.height);
         glBindFramebuffer(GL_READ_FRAMEBUFFER, source.fbo);
@@ -1231,7 +1400,7 @@ void GpuRenderer::draw_ops() {
           // Recorded without a copy only when kept, and kept ones stay until they are replayed.
           if (recorded.pixels.empty()) break;
           if (found != pixels_.end()) {
-            flush();  // a queued draw may read the texture going
+            flush(kBreakCopy);  // a queued draw may read the texture going
             glDeleteTextures(1, &found->second.texture);
             pixels_bytes_ -= static_cast<std::size_t>(found->second.width) * found->second.height * 4;
             pixels_.erase(found);
@@ -1244,7 +1413,13 @@ void GpuRenderer::draw_ops() {
           glBindTexture(GL_TEXTURE_2D, made.texture);
           glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
           glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-          gl::tex_image_argb(op.w, op.h, recorded.pixels.data());
+          if (op.w <= staging_texels_) {
+            copy_in(made.texture, op.w, op.h, recorded.pixels.data());
+            bind();
+            glUseProgram(program_);
+          } else {
+            gl::tex_image_argb(op.w, op.h, recorded.pixels.data());
+          }
           note_upload(kUploadPixels, elapsed_us(upload_began), bytes);
           pixels_bytes_ += bytes;
           found = pixels_.emplace(recorded.hash, made).first;
@@ -1256,7 +1431,7 @@ void GpuRenderer::draw_ops() {
       }
       case ER_CANVAS_MOVE: {
         // Through the copy target: a framebuffer cannot blit onto itself.
-        flush();
+        flush(kBreakCopy);
         glBindFramebuffer(GL_READ_FRAMEBUFFER, target_.fbo);
         glBindFramebuffer(GL_DRAW_FRAMEBUFFER, copy_.fbo);
         glBlitFramebuffer(op.x, op.y, op.x + op.w, op.y + op.h, op.x, op.y, op.x + op.w, op.y + op.h,
@@ -1272,7 +1447,7 @@ void GpuRenderer::draw_ops() {
         break;
     }
   }
-  flush();
+  flush(kBreakEnd);
   glActiveTexture(GL_TEXTURE0);
   glBindBuffer(GL_TEXTURE_BUFFER, 0);
 }
