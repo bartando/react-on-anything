@@ -118,6 +118,19 @@ bool ensure_directory(const char* path) {
   return errno == EEXIST && accessible(path);
 }
 
+// Before the rename to React on Anything a title kept its data and cache under /data/ps5-react; they
+// move once, so an update keeps them.
+void move_legacy_title_data() {
+  constexpr const char* kLegacyRoot = "/data/ps5-react";
+  char before[256], after[256];
+  std::snprintf(before, sizeof before, "%s/%s", kLegacyRoot, ROA_TITLE);
+  std::snprintf(after, sizeof after, "/data/react-on-anything/%s", ROA_TITLE);
+  if (!accessible(before) || accessible(after) || !ensure_directory("/data/react-on-anything")) return;
+  const bool moved = std::rename(before, after) == 0;
+  hui::sys::log("[ROA] moved %s to %s: %s", before, after, moved ? "ok" : std::strerror(errno));
+  if (moved) rmdir(kLegacyRoot);
+}
+
 // /<name> as it was before elevation. The helper replaces only the process's root and jail: this
 // descriptor, like the working directory, still names the sandbox's own folder afterwards.
 struct Before {
@@ -241,6 +254,7 @@ void initialize_filesystem_access() {
   if (status != elevation::Status::ok) return;
   console_access = true;
   remove_legacy_image_cache();
+  move_legacy_title_data();
   if (!writable(data_root)) {
     hui::sys::log("[ROA] data root not writable path=%s errno=%d; trying title data", data_root, errno);
     std::snprintf(data_root, sizeof data_root, "/data/react-on-anything/%s", ROA_TITLE);
