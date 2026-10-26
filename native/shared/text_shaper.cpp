@@ -725,7 +725,7 @@ void render(const ERTextRenderParams* params, const char* text, const std::uint8
     const bool rtl = paragraph_level(layout, line.start) & 1;
     const int width = to_px(line.width) + (cut ? ellipsis_w : 0);
     // A truncated line starts where its paragraph starts; the ellipsis goes at its end.
-    const std::uint8_t align = cut ? ER_TEXT_ALIGN_START : er_text_physical_align(params->text_align, rtl);
+    const std::uint8_t align = cut ? static_cast<std::uint8_t>(ER_TEXT_ALIGN_START) : er_text_physical_align(params->text_align, rtl);
     int x = clip.x;
     if (align == ER_TEXT_ALIGN_CENTER) x += std::max(0, (clip.w - width) / 2);
     else if (align == ER_TEXT_ALIGN_RIGHT || (align == ER_TEXT_ALIGN_START && rtl)) x += std::max(0, clip.w - width);

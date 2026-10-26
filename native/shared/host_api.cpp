@@ -314,6 +314,10 @@ JSValue device_info(JSContext* ctx, JSValueConst, int, JSValueConst*) {
   JS_SetPropertyStr(ctx, object, "freeMemory", known(ctx, info.free_memory));
   JS_SetPropertyStr(ctx, object, "processTime", known(ctx, info.process_time));
   JS_SetPropertyStr(ctx, object, "language", known(ctx, info.language));
+  JS_SetPropertyStr(ctx, object, "battery", known(ctx, info.battery));
+  JS_SetPropertyStr(ctx, object, "charging", info.charging < 0 ? JS_NULL : JS_NewBool(ctx, info.charging));
+  JS_SetPropertyStr(ctx, object, "network", known(ctx, info.network));
+  JS_SetPropertyStr(ctx, object, "wifiSignal", known(ctx, info.wifi_signal));
   return object;
 }
 

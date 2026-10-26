@@ -6,6 +6,11 @@
 #include <cstddef>
 #ifdef __APPLE__
 #include <CommonCrypto/CommonDigest.h>
+#elif defined(__SWITCH__)
+extern "C" {
+#include <switch/crypto/sha1.h>
+#include <switch/crypto/sha256.h>
+}
 #else
 #include <openssl/evp.h>
 #endif
@@ -17,13 +22,17 @@ public:
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
     valid_ = (sha1_ ? CC_SHA1_Init(&sha1_context_) : CC_SHA256_Init(&context_)) == 1;
+#elif defined(__SWITCH__)
+    if (sha1_) sha1ContextCreate(&sha1_context_);
+    else sha256ContextCreate(&context_);
+    valid_ = true;
 #else
     context_ = EVP_MD_CTX_new();
     valid_ = context_ && EVP_DigestInit_ex(context_, sha1_ ? EVP_sha1() : EVP_sha256(), nullptr) == 1;
 #endif
   }
   ~Hash() {
-#ifndef __APPLE__
+#if !defined(__APPLE__) && !defined(__SWITCH__)
     EVP_MD_CTX_free(context_);
 #endif
   }
@@ -31,6 +40,9 @@ public:
 #ifdef __APPLE__
     valid_ = valid_ && (sha1_ ? CC_SHA1_Update(&sha1_context_, bytes, static_cast<CC_LONG>(size)) :
                       CC_SHA256_Update(&context_, bytes, static_cast<CC_LONG>(size))) == 1;
+#elif defined(__SWITCH__)
+    if (sha1_) sha1ContextUpdate(&sha1_context_, bytes, size);
+    else sha256ContextUpdate(&context_, bytes, size);
 #else
     valid_ = valid_ && EVP_DigestUpdate(context_, bytes, size) == 1;
 #endif
@@ -42,6 +54,10 @@ public:
 #ifdef __APPLE__
     if (!valid_ || (sha1_ ? CC_SHA1_Final(digest, &sha1_context_) : CC_SHA256_Final(digest, &context_)) != 1) return {};
 #pragma clang diagnostic pop
+#elif defined(__SWITCH__)
+    if (!valid_) return {};
+    if (sha1_) sha1ContextGetHash(&sha1_context_, digest);
+    else sha256ContextGetHash(&context_, digest);
 #else
     unsigned size = 0;
     if (!valid_ || EVP_DigestFinal_ex(context_, digest, &size) != 1 || size != wanted) return {};
@@ -57,6 +73,9 @@ private:
 #ifdef __APPLE__
   CC_SHA256_CTX context_{};
   CC_SHA1_CTX sha1_context_{};
+#elif defined(__SWITCH__)
+  Sha256Context context_{};
+  Sha1Context sha1_context_{};
 #else
   EVP_MD_CTX* context_ = nullptr;
 #endif

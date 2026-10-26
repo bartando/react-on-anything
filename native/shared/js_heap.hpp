@@ -40,6 +40,10 @@ public:
   // under a fiftieth of the screen, so it does not land in a page slide that outlasts kIdleUs, until
   // three quarters of the room is garbage.
   void wait_for_still(bool still) { wait_for_still_ = still; }
+  // A host whose frames stop during a collection can keep something going meanwhile: `tick` runs on a
+  // thread of its own every few milliseconds while an idle collection does, and returns how many
+  // things it moved (for the log line).
+  void during_collection(int (*tick)(std::int64_t now_us)) { tick_ = tick; }
   // Call once per frame, after it is presented, with the pixels the frame repainted and the screen's.
   // Returns a log line when a collection ran during the frame or here, otherwise nullptr.
   const char* frame(JSRuntime* runtime, std::int64_t now_us, std::size_t repainted_px, std::size_t screen_px);
@@ -48,6 +52,7 @@ private:
   std::int64_t (*clock_)();
   std::int64_t last_input_us_ = 0;
   bool wait_for_still_ = true;
+  int (*tick_)(std::int64_t) = nullptr;
   int still_frames_ = 0;
   std::size_t threshold_ = 0, live_after_gc_ = 0;
   char line_[160] = {};

@@ -7,12 +7,15 @@
 #include <OpenGL/gl3.h>
 #elif defined(PROSPERO)
 #include <GL/glcorearb.h>
+#elif defined(__SWITCH__)
+#include <GLES3/gl32.h>
 #else
 #define GL_GLEXT_PROTOTYPES
 #include <SDL2/SDL_opengl.h>
 #endif
 
 #include <algorithm>
+#include <atomic>
 #include <cerrno>
 #include <cmath>
 #include <cstdio>
@@ -37,6 +40,13 @@ std::string names() {
   for (const char* name : model_names) out += (out.empty() ? "" : ", ") + std::string(name);
   return out;
 }
+
+namespace {
+std::atomic<bool> runnable{false};
+} // namespace
+
+bool available() { return runnable; }
+void set_available(bool available) { runnable = available; }
 } // namespace upscalers
 
 // Without compute shaders (macOS's GL 4.1) there is nothing to run: init() fails.
@@ -365,15 +375,22 @@ bool GlUpscale::step(float share) {
 #ifdef GL_COMPUTE_SHADER
   collect_timers();
   const int timer = next_timer_;
+#ifdef GL_TIME_ELAPSED
   const bool timed = timing_ && !timer_pending_[timer];
   if (timed) glBeginQuery(GL_TIME_ELAPSED, timers_[timer]);
+#else
+  // GLES has no timer queries without an extension: no GPU times there.
+  const bool timed = false;
+#endif
   do {
     run_pass(next_pass_);
     done_cost_ += passes_[next_pass_].cost;
     ++next_pass_;
   } while (running() && done_cost_ < share * total_cost_);
   if (timed) {
+#ifdef GL_TIME_ELAPSED
     glEndQuery(GL_TIME_ELAPSED);
+#endif
     timer_pending_[timer] = true;
     next_timer_ = (timer + 1) % kTimers;
   }
@@ -397,7 +414,7 @@ unsigned int GlUpscale::result(int slot, std::uint64_t generation) const {
 }
 
 void GlUpscale::collect_timers() {
-#ifdef GL_COMPUTE_SHADER
+#if defined(GL_COMPUTE_SHADER) && defined(GL_TIME_ELAPSED)
   for (int i = 0; i < kTimers; ++i) {
     if (!timer_pending_[i]) continue;
     GLint available = 0;

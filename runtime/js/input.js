@@ -3,18 +3,21 @@
 // Additional attribution term: see LICENSE-ATTRIBUTION.
 const listeners = new Set();
 const touchListeners = new Set();
+const screenTouchListeners = new Set();
 
-// Actions as strings, touch samples as [x, y] (x null when the finger lifts), in arrival order.
+// Actions as strings, touchpad samples as [x, y] and touchscreen ones as {x, y} (x null when the finger
+// lifts), in arrival order.
 const pending = [];
 
 function deliver() {
   for (const item of pending.splice(0)) {
     if (typeof item === 'string') for (const listener of listeners) listener(item);
-    else for (const listener of touchListeners) listener(item[0], item[1]);
+    else if (Array.isArray(item)) for (const listener of touchListeners) listener(item[0], item[1]);
+    else for (const listener of screenTouchListeners) listener(item.x, item.y);
   }
 }
 
-// Input protocol v5 (versioned apart from the native API's ABI in host_api.hpp): hosts emit
+// Input protocol v6 (versioned apart from the native API's ABI in host_api.hpp): hosts emit
 // up/down/left/right/confirm/back/l1/r1/l2/r2/triangle/square/options (v2: the first six; v3: up to
 // square) on the JS/render thread, before the frame's pump. Actions are delivered from the pump's microtask
 // drain, which runs inside React's batch like the bridge's own events: a direct host call is outside
@@ -28,6 +31,13 @@ globalThis.__ps5ReactDispatch = action => {
 // and (null) once when it lifts. The focus runtime turns its travel into moves (focus/touch.js).
 globalThis.__ps5ReactTouch = (x, y) => {
   if (pending.push([x ?? null, y ?? null]) === 1) Promise.resolve().then(deliver);
+};
+
+// Input protocol v6: a touchscreen's first finger, each frame it moves, at (x, y) in screen px, and
+// (null) once when it lifts. The focus runtime turns taps into presses and drags into scrolling
+// (focus/screen-touch.js).
+globalThis.__ps5ReactScreenTouch = (x, y) => {
+  if (pending.push({x: x ?? null, y: y ?? null}) === 1) Promise.resolve().then(deliver);
 };
 
 /**
@@ -52,4 +62,13 @@ export function subscribeInput(listener) {
 export function subscribeTouch(listener) {
   touchListeners.add(listener);
   return () => { touchListeners.delete(listener); };
+}
+
+/**
+ * Internal: receive the touchscreen's finger until the returned function is called.
+ * @param {(x: number | null, y: number | null) => void} listener
+ */
+export function subscribeScreenTouch(listener) {
+  screenTouchListeners.add(listener);
+  return () => { screenTouchListeners.delete(listener); };
 }

@@ -7,10 +7,17 @@
 #include <OpenGL/gl3.h>
 #elif defined(PROSPERO)
 #include <GL/glcorearb.h>
+#elif defined(__SWITCH__)
+#include <GLES3/gl32.h>
+#include <GLES2/gl2ext.h>
+// 16-bit normalized planes come from EXT_texture_norm16 on GLES, with desktop GL's values.
+#define GL_R16 GL_R16_EXT
+#define GL_RG16 GL_RG16_EXT
 #else
 #define GL_GLEXT_PROTOTYPES
 #include <SDL2/SDL_opengl.h>
 #endif
+#include "gl_api.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -19,7 +26,8 @@
 #include <string>
 
 namespace {
-const char* vertex_source = R"(#version 410 core
+// The texture path's shaders are in the GLSL that desktop GL and GLES share, under each host's version.
+const char* vertex_source = GLSL_VERSION R"(
 uniform vec4 dst;   // framebuffer pixels: x0 y0 x1 y1
 uniform vec4 src;   // the part of the picture drawn, 0..1: x0 y0 x1 y1; beyond it, `contain`'s black bars
 uniform vec2 size;  // the framebuffer
@@ -78,7 +86,7 @@ bool bar(vec2 at) {
 }
 )";
 
-const char* texture_fragment = R"(#version 410 core
+const char* texture_fragment = GLSL_VERSION R"(
 in vec2 at;
 uniform sampler2D plane0, plane1, plane2;
 uniform int interleaved;
@@ -275,6 +283,7 @@ bool GlVideo::init(bool storage_allowed) {
   (void)storage_allowed;
 #endif
   mode_ = storage_program_ ? Upload::storage : Upload::textures;
+  upscalers::set_available(mode_ == Upload::storage);
   upscalers_.resize(std::size_t(upscalers::count()));
   upscaler_tried_.assign(std::size_t(upscalers::count()), false);
   glGenVertexArrays(1, &vao_);

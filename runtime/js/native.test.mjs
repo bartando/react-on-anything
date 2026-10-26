@@ -124,69 +124,63 @@ test('remote images poll only while loads are pending and release every referenc
   delete globalThis.__ps5ReactNative;
 });
 
-test('finished image loads arriving together are delivered across frames under a time budget', () => {
+test('finished image loads are delivered in groups that grow while a render stays cheap', () => {
   const originalNow = performance.now;
   let clock = 0, polls = 0, nextId = 1, finished = [];
+  const groups = [];
   performance.now = () => clock;
+  // Each batch is one React render: a fixed 1.5 ms however many images it re-renders, 10 ms with id 6.
+  setFrameBatcher(run => {
+    const group = [];
+    groups.push(group);
+    deliveredInto = group;
+    run();
+    deliveredInto = null;
+    clock += group.includes(6) ? 10 : group.length ? 1.5 : 0;
+  });
+  let deliveredInto = null;
   globalThis.__ps5ReactNative = {image: {
     load: () => ({id: nextId++, state: 'loading', name: '', width: 0, height: 0, error: ''}),
     release: () => {},
     poll: () => { polls++; const out = finished; finished = []; return out; },
   }};
   try {
-    let frame = [];
-    const frames = [];
-    const step = () => { globalThis.__ps5ReactFrame(16); frames.push(frame); frame = []; };
-    // Each arrival costs what re-rendering its <Image> would: 1.5 ms, or 10 ms for id 6.
     const releases = new Map();
-    for (let i = 1; i <= 9; i++) {
+    for (let i = 1; i <= 12; i++) {
       releases.set(i, acquireImage(`https://example.com/${i}.jpg`, 20, 20, 0, false, result => {
         if (result.state === 'loading') return;
-        frame.push(result.state === 'failed' ? `${result.id}:${result.error}` : result.id);
-        clock += result.id === 6 ? 10 : 1.5;
+        deliveredInto?.push(result.state === 'failed' ? `${result.id}:${result.error}` : result.id);
       }));
     }
     releases.get(3)();
-    finished = [1, 2, 3, 4, 5, 6, 7, 8, 9].map(id => (id === 9
+    finished = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map(id => (id === 12
       ? {id, state: 'failed', name: '', width: 0, height: 0, error: 'HTTP 404'}
       : {id, state: 'ready', name: `@image:${id}`, width: 20, height: 20, error: ''}));
-    step();
-    releases.get(5)();
-    while (frames.length < 6) step();
-    assert.deepEqual(frames.filter(frame => frame.length), [[1, 2, 4], [6], [7, 8, '9:HTTP 404']],
-      'released ids are skipped for free, a slow arrival still lands, failures are delivered too');
-    assert.equal(polls, 3, 'polling continues while results are queued and stops once all are delivered');
-  } finally {
-    performance.now = originalNow;
-    delete globalThis.__ps5ReactNative;
-  }
-});
-
-test('image listener commits are measured individually despite the frame batcher', () => {
-  const originalNow = performance.now;
-  let finished = [], clock = 0;
-  const delivered = [];
-  const deferredBatches = [];
-  performance.now = () => clock;
-  setFrameBatcher(run => deferredBatches.push(run));
-  globalThis.__ps5ReactNative = {image: {
-    load: () => ({id: 1, state: 'loading', name: '', width: 0, height: 0, error: ''}),
-    release: () => {},
-    poll: () => { const out = finished; finished = []; return out; },
-  }};
-  try {
-    for (let id = 1; id <= 7; id++) acquireImage(`https://example.com/${id}.jpg`, 20, 20, 0, false, result => {
-      if (result.state === 'ready') { delivered.push(id); clock += 3; }
-    });
-    finished = [{id: 1, state: 'ready', name: '@image:1', width: 20, height: 20, error: ''}];
-    const batches = [];
-    for (let frame = 0; frame < 4; frame++) {
+    const frames = [], closed = [];
+    for (let frame = 0; frame < 5; frame++) {
+      const before = groups.length;
       globalThis.__ps5ReactFrame(16);
-      batches.push(delivered.length);
+      // The frame's own closing batch renders nothing here.
+      frames.push(groups.slice(before).filter(group => group.length));
+      closed.push(groups.at(-1).length === 0);
+      if (frame === 0) releases.get(8)();
     }
-    assert.deepEqual(batches, [2, 4, 6, 7], 'the next listener waits until the next frame after commits cross 4 ms');
-    assert.deepEqual(delivered, [1, 2, 3, 4, 5, 6, 7]);
-    assert.equal(deferredBatches.length, 4, 'listeners ran although no batch did; each frame still closes with one');
+    assert.ok(closed.every(Boolean), 'each frame still ends in a batch of its own, after the deliveries');
+    // The group size carries over from earlier deliveries, so the rules are checked rather than sizes.
+    const delivered = frames.flat(2);
+    assert.deepEqual(delivered, [1, 2, 4, 5, 6, 7, 9, 10, 11, '12:HTTP 404'],
+      'released ids are skipped for free, a slow render still lands, failures are delivered too');
+    const all = frames.flat(1);
+    const first = all[0], second = all[1];
+    assert.ok(second.length === 2 * first.length || second.includes(6) || delivered.length <= first.length,
+      'a cheap render doubles the next group');
+    const slowFrame = frames.find(frame => frame.some(group => group.includes(6)));
+    assert.ok(slowFrame.at(-1).includes(6), 'the render that passes the budget ends the frame');
+    const slow = all.findIndex(group => group.includes(6));
+    if (all[slow + 1]) assert.ok(all[slow + 1].length <= Math.max(1, all[slow].length / 2),
+      'after a render over budget the group halves');
+    assert.equal(polls, frames.filter(frame => frame.length).length,
+      'polling continues while results are queued and stops once all are delivered');
   } finally {
     setFrameBatcher(run => run());
     performance.now = originalNow;

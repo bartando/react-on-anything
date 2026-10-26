@@ -81,3 +81,37 @@ test('while it animates, position is where the engine shows the view (VirtualLis
   frame.shift(40);
   assert.equal(frame.position[1], engine.y, 'a shift moves it with the content');
 });
+
+test('a fling coasts on along the finger, slowing to a stop, and stops at the edge', () => {
+  const {engine, frame, settle} = setup(50000);
+  engine.y = 1000;
+  // The finger went up at 2 px per ms: the content scrolls down, about 2 × 325 px further.
+  frame.fling(0, -2);
+  globalThis.__ps5ReactFrame(1000 / 60);
+  const first = engine.y - 1000;
+  settle();
+  assert.ok(first > 25 && first < 35, `${first} px in the first frame`);
+  assert.ok(Math.abs(engine.y - 1650) < 10, `coasted to ${engine.y}`);
+  assert.equal(frame.timer, null);
+  assert.equal(frame.y, engine.y);
+  engine.maxY = 1700;
+  frame.fling(0, -2);
+  settle();
+  assert.equal(engine.y, 1700, 'the edge holds it');
+  assert.equal(frame.timer, null);
+});
+
+test('a touch or a focus scroll takes over from a fling', () => {
+  const {engine, frame} = setup(50000);
+  frame.fling(0, -2);
+  globalThis.__ps5ReactFrame(1000 / 60);
+  assert.equal(frame.halt(), true);
+  const caught = engine.y;
+  globalThis.__ps5ReactFrame(1000 / 60);
+  assert.equal(engine.y, caught, 'caught where it was');
+  assert.equal(frame.halt(), false, 'nothing left to catch');
+  frame.fling(0, -2);
+  frame.reveal({x: 0, y: 5000, width: 100, height: 100}, null);
+  for (let i = 0; i < 400 && frame.timer !== null; i++) globalThis.__ps5ReactFrame(1000 / 60);
+  assert.equal(engine.y, 4412, 'the focus scroll went where focus is');
+});

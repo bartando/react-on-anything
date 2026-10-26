@@ -3,7 +3,7 @@
 // Additional attribution term: see LICENSE-ATTRIBUTION.
 // Focus state without React: focusable nodes, nested scopes, D-pad moves, press, back and recovery.
 // Components keep one node or scope each and re-render only when their own node changes.
-import {reachable, screenRect, scrolledBy} from './frames.js';
+import {reachable, screenRect, scrolledBy, shownIn} from './frames.js';
 import {findClosest, findNearest, findWrap} from './geometry.js';
 
 /**
@@ -16,11 +16,16 @@ import {findClosest, findNearest, findWrap} from './geometry.js';
  *   An element with `scrollAnchor`, whose start its ScrollView aligns when revealing a descendant.
  * @typedef {{focusKey?: string, onPress?: () => void, onFocus?: () => void, onBlur?: () => void,
  *   autoFocus?: boolean, disabled?: boolean, nextFocusUp?: string, nextFocusDown?: string,
- *   nextFocusLeft?: string, nextFocusRight?: string}} NodeProps
+ *   nextFocusLeft?: string, nextFocusRight?: string, onDrag?: (drag: Drag) => void}} NodeProps
+ *   `onDrag`: a finger landing on the element grabs it, as a slider's thumb, rather than tapping it or
+ *   scrolling what is around it (see screen-touch.js).
+ * @typedef {{phase: 'start' | 'move' | 'end', x: number, y: number, rect: Rect | null}} Drag
+ *   The finger in screen px, and the element's rectangle on screen.
  * @typedef {{focusKey?: string, autoFocus?: boolean, trap?: boolean, wrap?: boolean, row?: boolean,
  *   restoreFocus?: boolean, inert?: boolean, onBack?: () => boolean | void,
- *   onAction?: (action: Action) => boolean | void}} ScopeProps
- *   `inert` takes the scope's subtree out of navigation (a hidden layer that stays mounted).
+ *   onAction?: (action: Action) => boolean | void, onTap?: (tap: {node: Node | null}) => boolean | void}} ScopeProps
+ *   `inert` takes the scope's subtree out of navigation (a hidden layer that stays mounted). `onTap` sees
+ *   a touchscreen tap first and takes it by returning true (see `tap`).
  * @typedef {import('../input.js').ButtonAction} Action a button beyond D-pad, Cross and Circle
  * @typedef {{kind: 'scope', parent: Scope | null, props: ScopeProps, remembered: Node | null,
  *   returnTo: Node | null, dead: boolean}} Scope
@@ -66,6 +71,83 @@ export class FocusManager {
     this.claims = new Set();
     /** What recovery would have started from while a claim held it off. */
     this.lostWhileClaimed = null;
+    /** Since the touchscreen was last used, until a button: focus is kept but neither shown nor revealed. */
+    this.touching = false;
+    /** @type {Node | null} what a resting finger shows pressed */
+    this.held = null;
+    /** @type {Set<(touching: boolean) => void>} */
+    this.modeListeners = new Set();
+  }
+
+  /** Whether `node` shows as focused: it has focus, and the controller rather than a finger is in use. */
+  shows(node) {
+    return this.focused === node && !this.touching;
+  }
+
+  /** The touchscreen took over (true) or a button took back (false). @param {boolean} touching */
+  setTouching(touching) {
+    if (this.touching === touching) return;
+    this.touching = touching;
+    if (this.focused) this.notify(this.focused);
+    for (const listener of this.modeListeners) listener(touching);
+  }
+
+  /**
+   * The first button after the touchscreen: focus shows again where it was, scrolled into view, unless a
+   * finger scrolled it off the screen, in which case it goes to the element nearest the screen's middle.
+   * @param {Rect} bounds the screen
+   */
+  resume(bounds) {
+    // Judged where the finger left things, before the pages it scrolled hand back to the app.
+    const node = this.focused;
+    const shown = candidate => shownIn(candidate.node.rect, candidate.node.frame, bounds);
+    // Not on a layer now covered by another (a page under the player a tap opened).
+    const stays = node && !node.dead && navigable(node.scope) && shown({node});
+    const nearest = stays ? null : findClosest(bounds, this.candidates(this.trapScope() ?? this.root).filter(shown));
+    this.setTouching(false);
+    if (stays) this.reveal(node);
+    else if (nearest) this.setFocus(nearest.node);
+  }
+
+  /**
+   * Shows `node` pressed while a finger rests on it, and no longer once it lifts or drags (null).
+   * @param {Node | null} node
+   */
+  hold(node) {
+    const held = this.held;
+    if (held === node) return;
+    this.held = node;
+    if (held && !held.dead) {
+      held.pressed = false;
+      this.notify(held);
+    }
+    if (node && !node.dead) {
+      this.clearTimer(node.pressTimer);
+      node.pressed = true;
+      this.notify(node);
+    }
+  }
+
+  /**
+   * The touchscreen's tap, on `node` or on nothing focusable (null). Each scope from the node's (else
+   * the trapping one focus is in, else the root) outward may take it first with `onTap`, as a video
+   * player brings its hidden controls back rather than pressing what is under them. Otherwise `node`
+   * takes focus, unshown, and its onPress runs after the press feedback Cross gives.
+   * @param {Node | null} node @returns {boolean | null} as press(); null when nothing was pressed
+   */
+  tap(node) {
+    this.hold(null);
+    for (let scope = node?.scope ?? this.trapScope() ?? this.root; scope; scope = scope.parent) {
+      if (scope.props.onTap?.({node}) === true) return null;
+    }
+    if (!node || !this.focus(node)) return null;
+    return this.press();
+  }
+
+  /** The `trap` scope focus is in, if any. @returns {Scope | null} */
+  trapScope() {
+    for (let scope = this.focused?.scope; scope; scope = scope.parent) if (scope.props.trap) return scope;
+    return null;
   }
 
   /**
@@ -322,7 +404,8 @@ export class FocusManager {
     if (next) {
       this.notify(next);
       next.props.onFocus?.();
-      this.reveal(next);
+      // A finger scrolls the content itself: what it taps stays where it is.
+      if (!this.touching) this.reveal(next);
     }
     for (const listener of this.listeners) listener();
   }

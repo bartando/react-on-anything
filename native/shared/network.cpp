@@ -9,11 +9,6 @@
 #endif
 #if !defined(PROSPERO) || PS5_REACT_NETWORKING
 #include <curl/curl.h>
-#ifdef __APPLE__
-#include <CommonCrypto/CommonDigest.h>
-#else
-#include <openssl/evp.h>
-#endif
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -522,8 +517,14 @@ bool configure_transport(void* handle, const std::string& url, bool follow_redir
   };
   set(CURLOPT_URL, url.c_str());
   set(CURLOPT_NOSIGNAL, 1L);
+#if LIBCURL_VERSION_NUM >= 0x075500
   set(CURLOPT_PROTOCOLS_STR, "http,https");
   set(CURLOPT_REDIR_PROTOCOLS_STR, url.starts_with("https:") ? "https" : "http,https");
+#else
+  // The Switch's curl (7.69) predates the string forms.
+  set(CURLOPT_PROTOCOLS, static_cast<long>(CURLPROTO_HTTP | CURLPROTO_HTTPS));
+  set(CURLOPT_REDIR_PROTOCOLS, static_cast<long>(url.starts_with("https:") ? CURLPROTO_HTTPS : CURLPROTO_HTTP | CURLPROTO_HTTPS));
+#endif
   set(CURLOPT_FOLLOWLOCATION, follow_redirects ? 1L : 0L);
   set(CURLOPT_MAXREDIRS, 5L);
   set(CURLOPT_HTTP_VERSION, static_cast<long>(CURL_HTTP_VERSION_1_1));

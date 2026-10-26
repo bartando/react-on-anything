@@ -94,3 +94,18 @@ def ps5(sdk, network_ports, env):
         "--pkg-config=false", "--x86asmexe=nasm", "--enable-static", "--disable-shared", "--enable-pic",
         "--enable-openssl", f"--extra-cflags=-I{Path(network_ports) / 'include'}",
         f"--extra-ldflags=-L{Path(network_ports) / 'lib'}", *COMPONENTS], env=env)
+
+
+def android(ndk, abi, api, network_prefix):
+    """Android TV, 32-bit ARM: demuxing, sound and subtitles; the picture decodes in MediaCodec, FFmpeg's
+    decoders being the fallback for what it refuses. TLS from the pinned OpenSSL the host links too."""
+    if abi != "armeabi-v7a":
+        raise RuntimeError(f"No FFmpeg configuration for {abi}")
+    bin = Path(ndk) / "toolchains/llvm/prebuilt/darwin-x86_64/bin"
+    return _build(f"android-{abi}", [
+        "--enable-cross-compile", "--target-os=android", "--arch=arm", "--cpu=armv7-a", "--enable-neon",
+        f"--cc={bin / f'armv7a-linux-androideabi{api}-clang'}", f"--cxx={bin / f'armv7a-linux-androideabi{api}-clang++'}",
+        f"--ar={bin / 'llvm-ar'}", f"--nm={bin / 'llvm-nm'}", f"--ranlib={bin / 'llvm-ranlib'}",
+        f"--strip={bin / 'llvm-strip'}", "--pkg-config=false", "--enable-static", "--disable-shared", "--enable-pic",
+        "--enable-openssl", f"--extra-cflags=-I{Path(network_prefix) / 'include'}",
+        f"--extra-ldflags=-L{Path(network_prefix) / 'lib'}", *COMPONENTS])

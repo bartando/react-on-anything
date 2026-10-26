@@ -26,6 +26,10 @@ bool sample(const char* image_name, int dst_x, int dst_y, int dst_w, int dst_h, 
 
 // Hosts call this once per frame before presenting, with the time and the display's frame interval.
 void update(std::int64_t now_us, std::int64_t frame_us);
+// Only the players' clocks and frames, from a thread standing in while the host's is held up (a JS
+// collection); the host's must be stopped meanwhile. Then the frame video `id` shows, or null.
+void advance(std::int64_t now_us, std::int64_t frame_us);
+const video::Frame* frame_of(std::uint64_t id);
 // Closes every player; before the sound output stops.
 void stop();
 // One line per open player for the host's log ("" without players): state, position, decoder, frames.

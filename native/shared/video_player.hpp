@@ -105,8 +105,9 @@ public:
   // routes audio and settles the state.
   // `frame_us` is the display's frame interval: a picture is due within half of it.
   void update(std::int64_t now_us, std::int64_t frame_us);
-  // The frame due now, or null before the first; valid until the next update().
-  const Frame* frame() const { return shown_.planes[0] ? &shown_ : nullptr; }
+  // The frame due now, or null before the first; valid until the next update(). A picture decoded into
+  // a texture (Android's) has no planes, only its owner.
+  const Frame* frame() const { return shown_.planes[0] || shown_.owner ? &shown_ : nullptr; }
   Status status() const;
 
 private:

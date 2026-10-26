@@ -481,3 +481,91 @@ test('entering a ScrollView from outside reaches only items it shows, moves insi
   t.focus.move('down');
   assert.equal(t.key(), 'below');
 });
+
+test('while a finger drives the touchscreen, focus is kept but neither shown nor revealed', () => {
+  const t = setup();
+  const revealed = [];
+  const page = {parent: null, x: 0, y: 0, timer: null, viewport: {x: 0, y: 0, width: 1280, height: 720},
+    reveal: rect => revealed.push(rect.y)};
+  const top = t.node('top', 0, 0);
+  const card = t.focus.createNode(t.focus.root, page, {focusKey: 'card', onPress: () => t.log.push('pressed card')});
+  t.focus.register(card);
+  t.focus.setRect(card, {x: 0, y: 400, width: 100, height: 100});
+  t.focus.focus(top);
+  assert.equal(t.focus.shows(top), true);
+  const modes = [];
+  t.focus.modeListeners.add(touching => modes.push(touching));
+  t.focus.setTouching(true);
+  assert.equal(t.focus.shows(top), false);
+  assert.equal(t.focus.tap(card), true);
+  assert.equal(t.key(), 'card');
+  assert.deepEqual(revealed, [], 'what a finger taps stays where it is');
+  assert.deepEqual(t.log, ['top', 'pressed card']);
+  t.focus.resume({x: 0, y: 0, width: 1280, height: 720});
+  assert.deepEqual(modes, [true, false]);
+  assert.equal(t.focus.shows(card), true);
+  assert.deepEqual(revealed, [400], 'a button scrolls to focus again');
+});
+
+test('a button after a finger scrolled focus away focuses the element nearest the screen\'s middle', () => {
+  const t = setup();
+  const page = {parent: null, x: 0, y: 0, timer: null, viewport: {x: 0, y: 0, width: 1280, height: 720}, reveal() {}};
+  const at = (key, y) => {
+    const created = t.focus.createNode(t.focus.root, page, {focusKey: key});
+    t.focus.register(created);
+    t.focus.setRect(created, {x: 590, y, width: 100, height: 100});
+  };
+  at('first', 0);
+  at('middle', 1400);
+  at('last', 2800);
+  t.focus.focus('first');
+  t.focus.setTouching(true);
+  page.y = 1100; // the finger scrolled `middle` to the screen's middle
+  // A PanView hands its finger offset back as the mode changes: judged before that.
+  t.focus.modeListeners.add(() => { page.y = 0; });
+  t.focus.resume({x: 0, y: 0, width: 1280, height: 720});
+  assert.equal(t.key(), 'middle');
+});
+
+test('a resting finger holds its element pressed until it lifts or drags', () => {
+  const t = setup();
+  const card = t.node('card', 0, 0);
+  t.focus.hold(card);
+  assert.equal(card.pressed, true);
+  t.focus.hold(null);
+  assert.equal(card.pressed, false);
+});
+
+test('a scope\'s onTap takes a tap first, on an element or on nothing, innermost outward', () => {
+  const t = setup();
+  const taps = [];
+  let hidden = true;
+  const player = t.scope(t.focus.root, {trap: true, onTap: ({node}) => {
+    taps.push(node?.props.focusKey ?? null);
+    if (!hidden) return false;
+    hidden = false;
+    return true;
+  }});
+  const bar = t.node('bar', 0, 600, player, {onPress: () => t.log.push('pressed bar')});
+  t.focus.focus(bar);
+  t.focus.setTouching(true);
+  assert.equal(t.focus.tap(bar), null, 'hidden controls come back instead of being pressed');
+  assert.equal(t.focus.tap(null), null, 'on nothing focusable, the trapping scope still sees it');
+  assert.deepEqual(taps, ['bar', null]);
+  assert.equal(t.focus.tap(bar), true);
+  assert.deepEqual(t.log.filter(entry => entry.startsWith('pressed')), ['pressed bar']);
+});
+
+test('a button after a tap opened a layer brings focus into the layer, not back under it', () => {
+  const t = setup();
+  const page = t.scope(t.focus.root);
+  const card = t.node('card', 0, 0, page, {onPress: () => {}});
+  t.focus.focus(card);
+  t.focus.setTouching(true);
+  // The tap opened the player over the page, which went inert with focus still on the card.
+  const player = t.scope(t.focus.root, {trap: true});
+  t.node('bar', 0, 600, player);
+  page.props = {inert: true};
+  t.focus.resume({x: 0, y: 0, width: 1280, height: 720});
+  assert.equal(t.key(), 'bar');
+});

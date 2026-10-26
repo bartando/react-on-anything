@@ -18,6 +18,10 @@ const char* name(int model);
 int count();
 // "artcnn, anime4k-s, ..." for error messages.
 std::string names();
+// Whether the video presenter's context runs them (GL 4.3 storage buffers), as it found when it started;
+// false before then and on hosts that draw video otherwise.
+bool available();
+void set_available(bool available);
 } // namespace upscalers
 
 class GlUpscale {

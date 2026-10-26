@@ -14,6 +14,7 @@ extern "C" {
 }
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -40,6 +41,13 @@ std::uint32_t next_id = 1;
 std::vector<std::string> unload_names;
 std::vector<std::pair<std::shared_ptr<void>, std::int64_t>> kept_rings;
 std::int64_t last_now_us = 0;
+// Players being released, each on a thread of its own: finished ones are joined by the next release,
+// the rest by stop(). (libnx has no pthread_detach, so a detached thread is not an option there.)
+struct Release {
+  std::unique_ptr<std::atomic<bool>> done; // the thread's, which is joined before this goes
+  std::thread thread;
+};
+std::vector<Release> releases;
 
 // Every placeholder is the same opaque black tile: an <Image layer> qualifies only with opaque pixels.
 constexpr int kTile = 16;
@@ -62,7 +70,20 @@ void assign_audio() {
 void dispose(Entry& entry) {
   for (auto& ring : entry.player->detach_audio()) kept_rings.emplace_back(std::move(ring), last_now_us + 300'000);
   unload_names.push_back(entry.name);
-  std::thread([player = std::move(entry.player)]() mutable { player.reset(); }).detach();
+  for (auto it = releases.begin(); it != releases.end();) {
+    if (!*it->done) {
+      ++it;
+      continue;
+    }
+    it->thread.join();
+    it = releases.erase(it);
+  }
+  auto done = std::make_unique<std::atomic<bool>>(false);
+  std::atomic<bool>* flag = done.get();
+  releases.push_back({std::move(done), std::thread([player = std::move(entry.player), flag]() mutable {
+    player.reset();
+    *flag = true;
+  })});
 }
 
 bool get_bool(JSContext* ctx, JSValueConst object, const char* key, bool fallback) {
@@ -432,7 +453,8 @@ bool sample(const char* image_name, int dst_x, int dst_y, int dst_w, int dst_h, 
   if (!find(image_name, layer)) return false;
   rgb[0] = rgb[1] = rgb[2] = 0;
   const video::Frame* frame = layer.frame;
-  if (!frame || dst_w <= 0 || dst_h <= 0) return true;
+  // A frame without planes lives in a texture only (Android's players): it reads as black here.
+  if (!frame || !frame->planes[0] || dst_w <= 0 || dst_h <= 0) return true;
   // The same fit as GlVideo::draw.
   const float picture = frame->width * frame->aspect / frame->height, box = float(dst_w) / dst_h;
   float u = (x + 0.5f - dst_x) / dst_w, v = (y + 0.5f - dst_y) / dst_h;
@@ -477,6 +499,16 @@ void update(std::int64_t now_us, std::int64_t frame_us) {
   for (Entry& entry : players) entry.player->update(now_us, frame_us);
 }
 
+void advance(std::int64_t now_us, std::int64_t frame_us) {
+  for (Entry& entry : players) entry.player->update(now_us, frame_us);
+}
+
+const video::Frame* frame_of(std::uint64_t id) {
+  for (const Entry& entry : players)
+    if (entry.id == id) return entry.player->frame();
+  return nullptr;
+}
+
 std::string summary() {
   std::string out;
   for (const Entry& entry : players) {
@@ -499,11 +531,17 @@ void stop() {
     entry.player.reset();
   }
   players.clear();
+  for (Release& release : releases) release.thread.join();
+  releases.clear();
   // The mixer reads a ring swapped out for at most a grain or two.
   std::this_thread::sleep_for(std::chrono::milliseconds(30));
   kept_rings.clear();
 }
 } // namespace video_layers
+
+JSValue can_upscale(JSContext*, JSValueConst, int, JSValueConst*) {
+  return upscalers::available() ? JS_TRUE : JS_FALSE;
+}
 
 JSValue ps5_react_video_api(JSContext* ctx) {
   JSValue out = JS_NewObject(ctx);
@@ -513,6 +551,7 @@ JSValue ps5_react_video_api(JSContext* ctx) {
     {"setAudioDelay", set_audio_delay, 2}, {"setAudioOutput", set_audio_output, 2},
     {"setResizeMode", set_fit, 2}, {"setUpscale", set_upscale, 2}, {"setCompare", set_compare, 3}, {"selectAudioTrack", select_audio, 2},
     {"selectSubtitleTrack", select_subtitle, 2}, {"addSubtitle", add_subtitle, 4}, {"poll", poll, 0},
+    {"canUpscale", can_upscale, 0},
   };
   for (const auto& function : functions)
     JS_SetPropertyStr(ctx, out, function.name, JS_NewCFunction(ctx, function.call, function.name, function.length));
@@ -526,6 +565,8 @@ namespace video_layers {
 bool find(const char*, Layer&) { return false; }
 bool sample(const char*, int, int, int, int, int, int, unsigned*) { return false; }
 void update(std::int64_t, std::int64_t) {}
+void advance(std::int64_t, std::int64_t) {}
+const video::Frame* frame_of(std::uint64_t) { return nullptr; }
 void stop() {}
 std::string summary() { return {}; }
 } // namespace video_layers

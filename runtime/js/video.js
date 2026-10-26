@@ -4,7 +4,7 @@
 // <Video>: a file or stream played natively (FFmpeg demuxing, the platform's decoder), drawn by the
 // presenter beneath the interface as an <Image layer> the player fills. See docs/VIDEO.md.
 import {createElement, forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState} from 'react';
-import {openVideo} from './native.js';
+import {canUpscaleVideo, openVideo} from './native.js';
 
 const FITS = {contain: 0, cover: 1, stretch: 2};
 const upscaleModel = upscale => (upscale === true ? 'artcnn' : upscale || '');
@@ -20,7 +20,8 @@ const upscaleModel = upscale => (upscale === true ? 'artcnn' : upscale || '');
  * the sound that much later than the picture, to match a TV's own delay. The ref seeks, selects an audio
  * track and reads the status. `upscale` names a network for animation that doubles a picture shown
  * bigger than its source ('artcnn' or true, 'anime4k-s', 'anime4k-m', 'anime4k-l', 'anime4k-vl',
- * 'anime4k-ul'), where the GPU runs compute shaders (the PS5); elsewhere it scales as before.
+ * 'anime4k-ul'), where the GPU runs compute shaders (the PS5; `Video.canUpscale()` tells); elsewhere it
+ * scales as before.
  * `compare` ({upscale, split}) shows the picture through a second model (false or '' for none) right of
  * `split` (0..1 across the picture), so two models, or one and none, can be compared on the same frame.
  * `audioOutput` is 'pcm' (decoded, the default), 'auto' (AC-3, E-AC-3 and DTS at 48 kHz go undecoded to a
@@ -116,3 +117,6 @@ export const Video = forwardRef(function Video(props, ref) {
     resizeMode: 'stretch'});
 });
 Video.displayName = 'Video';
+
+/** Whether `upscale` takes effect on this host, rather than the picture only scaling. */
+Video.canUpscale = canUpscaleVideo;

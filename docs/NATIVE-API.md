@@ -65,6 +65,10 @@ const label = Platform.select({ps5: 'Console', desktop: 'Preview', default: 'Unk
 | `freeMemory` | bytes | Memory available to the app |
 | `processTime` | µs | CPU time used by this process |
 | `language` | string | System language as a BCP 47 tag (`en-US`, `pt-BR`, `zh-Hans`) |
+| `battery` | % | Charge left; `null` without a battery (the Switch and a Mac laptop have one) |
+| `charging` | boolean | Whether a charger is in; `null` without a battery |
+| `network` | string | `wifi` or `ethernet` while online; `null` offline or unknown (the Switch reads it) |
+| `wifiSignal` | 0–3 | Wi-Fi signal bars; `null` off Wi-Fi or unknown |
 
 Any value the host cannot read is `null`.
 

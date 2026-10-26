@@ -60,7 +60,7 @@ AppRegistry.registerComponent('menu', () => Menu);
 `npm run create` scaffolds this menu; `apps/starter`, `apps/tailwind-gallery`,
 `apps/system-explorer`, and `apps/motion-lab` use the patterns below.
 
-## Host input (input protocol v5)
+## Host input (input protocol v6)
 
 The input protocol is versioned on its own; it is not the native API's ABI
 version ([NATIVE-API.md](NATIVE-API.md#contract)).
@@ -80,6 +80,36 @@ Since input protocol v5, hosts also report the touchpad's first finger: `__ps5Re
 with its position 0..1 across and down the pad each frame it touches, and `__ps5ReactTouch(null)`
 once when it lifts (the PS5 reads the DualSense; the desktop, a controller's touchpad through SDL).
 See [Touchpad](#touchpad).
+
+Since input protocol v6, a host with a touchscreen (the Switch) reports its first finger too:
+`__ps5ReactScreenTouch(x, y)` in screen px each frame it touches, and `__ps5ReactScreenTouch(null)`
+once when it lifts. The touchscreen works as on a phone, detached from focus:
+
+- A finger resting on a focusable element shows it pressed after 80 ms; lifting it there taps it: it
+  takes focus and its `onPress` runs, as Cross would. A tap never reaches past a `trap` scope.
+- A drag past 12 logical px scrolls the innermost ScrollView under it along the drag's axis, the
+  content following the finger. Let go of while moving (0.3 logical px per ms or faster), the content
+  coasts on and slows to a stop; a touch catches it and presses nothing. Where nothing scrolls along
+  the drag, nothing moves.
+- An element with `onDrag` takes the finger itself, as a slider's thumb: from where it lands (no slop,
+  no tap, nothing scrolls) until it lifts, `onDrag({phase, x, y, rect})` gets `start`, each `move` and
+  `end`, in screen px with the element's rectangle on screen. Give it only while the element shows.
+- A scope's `onTap({node})` sees each tap first, on an element or on nothing focusable (`node` null),
+  innermost outward from the tapped element's scope, else the trapping one: returning true takes it, as a
+  video player brings its hidden controls back instead of pressing what is under them.
+- From a finger landing until the next button, focus is neither shown (`focused` is false in styles,
+  `useIsFocused` and motion's `whileFocus`) nor revealed: nothing scrolls to it. `useTouching()` tells a
+  component, `useFocusActions().touching()` a callback. The next D-pad press or Cross only brings focus
+  back, on the element it was on if that is still on screen, scrolled into view, else on the one
+  nearest the screen's middle; other buttons act as well.
+- A page the app moves itself rather than through a ScrollView (one column translated to its focused
+  row) scrolls under a finger through `usePan()` and `<PanView pan={pan} offset={y} max={max}>`, with
+  `offset` and `max` in logical px: the finger's offset is an engine value added to the app's, with no
+  render per frame. A `<PanView pan={pan}>` without them moves with the page (a header translated by the
+  same offset). The next button eases the finger's offset back out while the app scrolls to focus.
+
+Input scripts take `tap:X:Y`, `drag:X1:Y1:X2:Y2`, and `finger:X:Y` … `finger:up` for a finger held down
+across steps, in screen px (runtime/js/focus/screen-touch.js).
 
 The focus manager does not move on these buttons: they go to the enclosing
 `FocusScope.onAction` handlers (tabs on L1/R1, a filter on Triangle, settings on Options)

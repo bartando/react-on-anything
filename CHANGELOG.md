@@ -1,5 +1,84 @@
 # Changelog
 
+## Unreleased — an Android TV host
+
+- `native/switch` runs an app on a Nintendo Switch with custom firmware, as a homebrew NRO drawing with
+  the GPU renderer through Mesa's GLES 3.2, and `tools/switch.py` builds it and pushes it to the Homebrew
+  Menu's netloader (docs/SWITCH.md). It lays the app out at 720p on the console and 1080p docked, raises
+  the CPU, GPU and memory clocks for its run, decodes video with NVDEC, and takes the controller and the
+  touchscreen. Anyfin's home screen holds 60 fps there.
+
+- A touchscreen is input protocol v6: `__ps5ReactScreenTouch(x, y)`, working as on a phone. A tap presses
+  the element under the finger, a drag scrolls the ScrollView under it and flings it on when let go of
+  while moving, and focus is neither shown nor scrolled to until the next button (`useTouching`). A page
+  the app translates to its focused row scrolls under a finger through `usePan` and `PanView`.
+  The desktop preview's mouse is one, and input scripts take `tap:X:Y` and `drag:X1:Y1:X2:Y2`.
+
+- The GPU renderer keeps the pictures the engine draws on the CPU (icons) by content, so one drawn the
+  same way each frame is uploaded once. Re-uploading them through one texture cost the Switch 3 s of
+  stalls in a minute of browsing, and the desktop 550 ms in a short run; now 0.6 s and 80 ms.
+
+- `native/android` runs an app on Android TV through the GPU renderer and OpenGL ES 3.2, and
+  `tools/android.py` builds, installs and starts it (docs/ANDROID.md). Anyfin runs on an NVIDIA SHIELD
+  at 1080p and 55 to 59 fps on its home screen, on under one CPU core; most of each frame is the
+  renderer issuing its draws.
+
+- Video plays on Android through the FFmpeg player, built for 32-bit ARM by `tools/ffmpeg.py`, with the
+  picture decoded in hardware by MediaCodec (`native/android/media_codec.hpp`) onto a system layer under
+  the window, which shows 10-bit pictures as they are and switches the TV to HDR for HDR10 (HLG untested);
+  sampled as a GL texture, the Shield drew them as garbage. H.264 and HEVC become Annex B without
+  FFmpeg 7.1's filter, which put a file header's stale parameter sets after a keyframe's own. The system's MediaPlayer, tried first, cannot open HLS with
+  fMP4 segments. Audio tracks and subtitles work as on the other hosts; upscalers are not there.
+
+- On Android the video decoder waits for the reader to give an image back instead of losing the frame,
+  a JS collection (about 150ms on the Shield) no longer stops the video: a thread stands in for the
+  render thread meanwhile (GcScheduler::during_collection), and images decode with the system's
+  AImageDecoder, shrunk while decoding, 40% faster than stb_image there.
+
+- Finished image loads reach their components in batches that each render once, growing while a
+  render stays under 2ms and shrinking past 4ms, instead of one render per image: a detail page's 90
+  images cost half the JS they did.
+
+- The GPU renderer sets a uniform, program, blend function, scissor or texture only when it changes:
+  the Shield's driver charges for every call. The pixels are the same.
+
+- The GPU renderer and the presenter include `gl_api.hpp`, which picks the platform's GL and GLSL
+  dialect: their shaders now compile as GLSL 4.10 and GLSL ES 3.20.
+
+## Unreleased — the desktop preview can draw with the GPU
+
+- `PS5_REACT_GPU=1` draws the preview with OpenGL instead of the software rasterizer: the engine skips
+  what the GPU renderer takes, and the presenter shows its texture, uploading nothing. On an Anyfin
+  tour, frames that repaint most of the screen run at 82 fps on 0.4 CPU cores, against 74 to 113 fps
+  on 2.7 cores with eight render workers and 29 to 46 fps with one (an M-series Mac at 4K).
+
+- The animated focus ring (a border sweep) has a shader of its own, and a captured op hands over
+  only the box it drew in, so neither re-uploads most of the ring's or an icon's clip every frame.
+
+## Unreleased — a GPU mirror in the desktop preview
+
+- `PS5_REACT_GPU_MIRROR=1` makes the desktop preview draw each commit a second time with OpenGL,
+  from the canvas ops, beside the software rasterizer. Each `shot:` compares the two as the screen
+  shows them, over the presenter's layers (a page's backdrop), and writes both screens and their
+  difference next to the shot. On an Anyfin tour (home, a row, a title page) 0.1% of pixels differ by
+  more than 2 levels, all at the antialiased edges of rounded rings.
+
+- A canvas can answer `ER_CANVAS_CAPTURE` to a shadow, border sweep, arc or vector: the engine draws
+  it into a buffer of its own and hands over the pixels (`ER_CANVAS_PIXELS`). The mirror draws those
+  shapes that way until it has shaders for them.
+
+## Unreleased — a canvas sees every drawing primitive
+
+- The engine offers every drawing primitive (rounded rects, gradients, shadows, text, images,
+  vectors, border sweeps, arcs) and every clip, alpha, blend, offscreen group and transform to an
+  optional canvas before rasterizing it (`patches/embeddedReact-canvas.patch`, `er_canvas.h`). With
+  none installed the software path runs as before: the starter's framebuffer is byte for byte the
+  same. It is the seam a GPU renderer will draw through.
+
+- `PS5_REACT_CANVAS_TRACE=<file>` makes the desktop preview list every primitive of each commit, and
+  any pixels that reached the screen outside one. A traced Anyfin tour (home, rows, a title page,
+  stills, a menu) found none.
+
 ## Unreleased — the CLI uses the project's .venv
 
 - `npm run build`, `dev` and the rest ran whatever `python3` was on PATH, so they lost Pillow when

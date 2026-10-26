@@ -4,14 +4,7 @@
 #include "gl_presenter.hpp"
 #include "video_api.hpp"
 
-#ifdef __APPLE__
-#include <OpenGL/gl3.h>
-#elif defined(PROSPERO)
-#include <GL/glcorearb.h>
-#else
-#define GL_GLEXT_PROTOTYPES
-#include <SDL2/SDL_opengl.h>
-#endif
+#include "gl_api.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -20,7 +13,7 @@
 
 namespace {
 // Oversized triangle: one draw, no vertex buffer, no seam through the image.
-const char* vertex_source = R"(#version 410 core
+const char* vertex_source = GLSL_VERSION R"(
 void main() {
   vec2 p = vec2(float((gl_VertexID << 1) & 2), float(gl_VertexID & 2));
   gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0);
@@ -29,7 +22,7 @@ void main() {
 // Copies a rect staged in a buffer texture, `width` texels a row from `first`, into the bound target
 // texture, whose rows are image rows.
 // The buffer holds 0xAARRGGBB words, which little-endian storage puts in B,G,R,A order.
-const char* stage_fragment_source = R"(#version 410 core
+const char* stage_fragment_source = GLSL_VERSION R"(
 uniform samplerBuffer rows;
 uniform int width;
 uniform ivec2 first;
@@ -44,7 +37,7 @@ void main() {
 // (x0 y0 x1 y1), their src rects image pixels, their radii (tl tr br bl) the corner squares left to the
 // framebuffer. The first pass composites over black, opaque; more layers take earlier passes, blended
 // under the last.
-const char* composite_fragment_source = R"(#version 410 core
+const char* composite_fragment_source = GLSL_VERSION R"(
 uniform sampler2D frame;
 uniform sampler2D images[4];
 uniform int layer_count;
@@ -146,7 +139,7 @@ std::uint32_t micros_since(std::chrono::steady_clock::time_point start) {
 bool GlPresenter::init(int width, int height) {
   if (width <= 0 || height <= 0 || composite_program_) return false;
   width_ = width; height_ = height;
-  synced_ = false;
+  synced_ = texture_shown_ = false;
   GLuint vertex = compile(GL_VERTEX_SHADER, vertex_source);
   GLuint composite = compile(GL_FRAGMENT_SHADER, composite_fragment_source);
   GLuint stage = compile(GL_FRAGMENT_SHADER, stage_fragment_source);
@@ -179,7 +172,7 @@ bool GlPresenter::init(int width, int height) {
 
 bool GlPresenter::draw(const std::uint32_t* argb, int sw, int sh) {
   if (!composite_program_ || !argb || sw <= 0 || sh <= 0) return false;
-  synced_ = false;
+  synced_ = texture_shown_ = false;
   upload_rows(frame_, frame_fbo_, width_, height_, argb, 0, height_);
   return present(sw, sh);
 }
@@ -190,6 +183,7 @@ bool GlPresenter::draw(const std::uint32_t* argb, std::span<const ERRect> damage
   timing_ = {};
   const auto start = std::chrono::steady_clock::now();
   bool full = !synced_;
+  texture_shown_ = false;
   for (const DamageMove& m : moves)
     if (!full && !move(m)) full = true;
   if (full) {
@@ -207,7 +201,7 @@ bool GlPresenter::draw(const std::uint32_t* argb, std::span<const ERRect> damage
 
 bool GlPresenter::unchanged(std::span<const ERRect> damage, std::span<const DamageMove> moves, int sw,
                             int sh) const {
-  if (!damage.empty() || !moves.empty() || !synced_ || sw != surface_width_ || sh != surface_height_ ||
+  if (!damage.empty() || !moves.empty() || !(synced_ || texture_shown_) || sw != surface_width_ || sh != surface_height_ ||
       layers_.size() != drawn_layers_.size())
     return false;
   for (std::size_t i = 0; i < layers_.size(); ++i) {
@@ -264,8 +258,13 @@ void GlPresenter::upload_rect(unsigned int target, unsigned int fbo, int width, 
     glBindTexture(GL_TEXTURE_2D, target);
     glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
     glPixelStorei(GL_UNPACK_ROW_LENGTH, width);
+#if GL_ES_HOST
+    // GLES 3.2 always has buffer textures; without them there is no BGRA upload either.
+    (void)pixels;
+#else
     glTexSubImage2D(GL_TEXTURE_2D, 0, rect.x, rect.y, rect.w, rect.h, GL_BGRA, GL_UNSIGNED_BYTE,
                     pixels + static_cast<std::size_t>(rect.y) * width + rect.x);
+#endif
     glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
     return;
   }
@@ -385,7 +384,7 @@ void GlPresenter::composite(int x, int y, int w, int h) {
   // Creating an image can move the others, so the pointers are taken once all exist.
   for (Drawn& d : drawn)
     if (!d.video) d.image = layer_image(*d.layer);
-  glBindFramebuffer(GL_FRAMEBUFFER, 0);
+  glBindFramebuffer(GL_FRAMEBUFFER, target_fbo_);
   glViewport(x, y, w, h);
   bool covered = false;
   std::size_t begin = 0;
@@ -425,7 +424,7 @@ void GlPresenter::composite_group(std::size_t begin, std::size_t end, bool opaqu
   const int passes = std::max<int>(with_frame ? 1 : 0, (int(end - begin) + kPassLayers - 1) / kPassLayers);
   if (!passes) return;
   glDisable(GL_SCISSOR_TEST);
-  glBindFramebuffer(GL_FRAMEBUFFER, 0);
+  glBindFramebuffer(GL_FRAMEBUFFER, target_fbo_);
   glViewport(x, y, w, h);
   glBindVertexArray(vao_);
   glUseProgram(composite_program_);
@@ -433,7 +432,7 @@ void GlPresenter::composite_group(std::size_t begin, std::size_t end, bool opaqu
   glUniform4f(at("view"), float(x), float(y), float(w), float(h));
   glUniform2f(at("size"), float(width_), float(height_));
   glActiveTexture(GL_TEXTURE0);
-  glBindTexture(GL_TEXTURE_2D, frame_);
+  glBindTexture(GL_TEXTURE_2D, frame_override_ ? frame_override_ : frame_);
   glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
   for (int pass = 0; pass < passes; ++pass) {
     float clip[4 * kPassLayers] = {}, dst[4 * kPassLayers] = {}, src[4 * kPassLayers] = {};
@@ -482,7 +481,9 @@ bool GlPresenter::present(int sw, int sh) {
   } video_done{video_};
   ++presents_;
   glDisable(GL_DEPTH_TEST);
+#ifdef GL_FRAMEBUFFER_SRGB
   glDisable(GL_FRAMEBUFFER_SRGB);
+#endif
   if (sw == width_ && sh == height_) {
     composite(0, 0, sw, sh);
   } else {
@@ -496,6 +497,41 @@ bool GlPresenter::present(int sw, int sh) {
   }
   staged_ = 0;
   return glGetError() == GL_NO_ERROR;
+}
+
+bool GlPresenter::draw_texture(unsigned int frame, int sw, int sh) {
+  if (!composite_program_ || !frame || sw <= 0 || sh <= 0) return false;
+  timing_ = {};
+  synced_ = false;
+  texture_shown_ = true;
+  frame_override_ = frame;
+  const auto drawing = std::chrono::steady_clock::now();
+  const bool ok = present(sw, sh);
+  timing_.draw_us = micros_since(drawing);
+  frame_override_ = 0;
+  return ok;
+}
+
+void GlPresenter::composite_to(unsigned int fbo, unsigned int frame) {
+  // The layers as last presented: the engine's own list is valid only until the commit after it.
+  std::vector<ERLayer> layers;
+  layers.reserve(drawn_layers_.size());
+  for (const DrawnLayer& d : drawn_layers_) {
+    layers.push_back(d.layer);
+    layers.back().image = d.image.c_str();
+  }
+  const std::span<const ERLayer> shown = layers_;
+  layers_ = layers;
+  target_fbo_ = fbo;
+  frame_override_ = frame;
+  glDisable(GL_DEPTH_TEST);
+#ifdef GL_FRAMEBUFFER_SRGB
+  glDisable(GL_FRAMEBUFFER_SRGB);
+#endif
+  composite(0, 0, width_, height_);
+  target_fbo_ = frame_override_ = 0;
+  layers_ = shown;
+  glBindFramebuffer(GL_FRAMEBUFFER, 0);
 }
 
 void GlPresenter::release() {
@@ -517,5 +553,5 @@ void GlPresenter::release() {
   if (vao_) glDeleteVertexArrays(1, &vao_);
   frame_ = frame_fbo_ = scratch_ = scratch_fbo_ = composite_program_ = stage_program_ = vao_ = 0;
   max_texels_ = 0;
-  synced_ = false;
+  synced_ = texture_shown_ = false;
 }

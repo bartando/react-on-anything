@@ -117,6 +117,53 @@ bool InputScript::parse(const char* text, char* error, std::size_t size) {
       steps_.push_back({"touch:up", 0});
       continue;
     }
+    if (token == "finger:up") {
+      steps_.push_back({"screen:up", 0});
+      continue;
+    }
+    if (token.rfind("finger:", 0) == 0) {
+      // finger:X:Y puts a finger at (X, Y) on the touchscreen and leaves it there until finger:up, so a
+      // script can take a shot of a gesture in progress.
+      double x = std::strtod(token.c_str() + 7, &rest), y = -1;
+      if (*rest == ':') y = std::strtod(rest + 1, &rest);
+      if (x < 0 || y < 0 || *rest) {
+        std::snprintf(error, size, "bad finger '%s' (finger:X:Y in screen px, or finger:up)", token.c_str());
+        return false;
+      }
+      char sample[48];
+      std::snprintf(sample, sizeof sample, "screen:%.1f,%.1f", x, y);
+      steps_.push_back({sample, 0});
+      continue;
+    }
+    if (token.rfind("tap:", 0) == 0 || token.rfind("drag:", 0) == 0) {
+      // tap:X:Y and drag:X1:Y1:X2:Y2: a finger on the touchscreen in screen px, then lifting; a drag
+      // slides from one point to the other over kSwipeFrames frames.
+      const bool tap = token[0] == 't';
+      double p[4] = {};
+      const int wanted = tap ? 2 : 4;
+      const char* at = token.c_str() + (tap ? 4 : 5);
+      int got = 0;
+      for (; got < wanted; ++got) {
+        p[got] = std::strtod(at, &rest);
+        if (rest == at || p[got] < 0) break;
+        at = rest + (*rest == ':' && got + 1 < wanted ? 1 : 0);
+      }
+      if (got != wanted || *rest) {
+        std::snprintf(error, size, "bad %s '%s' (tap:X:Y or drag:X1:Y1:X2:Y2 in screen px)", tap ? "tap" : "drag",
+                      token.c_str());
+        return false;
+      }
+      const int frames = tap ? 0 : kSwipeFrames;
+      for (int frame = 0; frame <= frames; ++frame) {
+        const double t = frames ? static_cast<double>(frame) / frames : 0;
+        char sample[48];
+        std::snprintf(sample, sizeof sample, "screen:%.1f,%.1f", p[0] + (p[2] - p[0]) * t * !tap,
+                      p[1] + (p[3] - p[1]) * t * !tap);
+        steps_.push_back({sample, 0});
+      }
+      steps_.push_back({"screen:up", 0});
+      continue;
+    }
     long count = 1;
     if (const std::size_t star = token.find('*'); star != std::string::npos) {
       count = std::strtol(token.c_str() + star + 1, &rest, 10);
@@ -132,7 +179,7 @@ bool InputScript::parse(const char* text, char* error, std::size_t size) {
     if (!action) {
       std::string known;
       for (const char* name : kActionNames) known += std::string(name) + ", ";
-      std::snprintf(error, size, "unknown action '%s' (use %squit, wait:MS, shot:NAME, swipe:DIRECTION:TRAVEL, hold:, release:, trigger:)",
+      std::snprintf(error, size, "unknown action '%s' (use %squit, wait:MS, shot:NAME, swipe:DIRECTION:TRAVEL, tap:X:Y, drag:X1:Y1:X2:Y2, finger:X:Y, finger:up, hold:, release:, trigger:)",
                     token.c_str(), known.c_str());
       return false;
     }

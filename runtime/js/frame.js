@@ -33,6 +33,11 @@ export function setFrameBatcher(batcher) {
   batch = batcher;
 }
 
+/** Internal: runs `run` in a batch of its own, so the state it sets renders once, as it returns. */
+export function batched(run) {
+  batch(run);
+}
+
 /**
  * Internal: call `callback(elapsedMs)` every frame until the returned function is called.
  * @param {(elapsedMs: number) => void} callback

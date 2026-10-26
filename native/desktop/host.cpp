@@ -28,6 +28,8 @@ void er_register_assets(void);
 #include "baked_sounds.h"
 #include "damage_tracker.hpp"
 #include "frame_stats.hpp"
+#include "canvas_trace.hpp"
+#include "gpu_renderer.hpp"
 #include "gl_presenter.hpp"
 #include "host_api.hpp"
 #include "host_platform.hpp"
@@ -156,6 +158,8 @@ struct Host {
   // self-tests read back every frame. exposed forces the next frame out after the window reappears.
   bool skip_still = false, exposed = false;
   int render_worker_count = 1;
+  bool tracing = false;
+  GpuRenderer gpu;
   Uint32 previous_tick = 0, next_repeat = 0, next_image_stats = 0;
   // When the last frame callback ran: the next one advances by the whole frame period, swap wait included.
   std::int64_t previous_step_us = 0;
@@ -174,9 +178,12 @@ struct Host {
   GcScheduler gc_scheduler{now_us};
   JsProfiler profiler{now_us};
   bool l2_down = false, r2_down = false, key_l2_down = false, key_r2_down = false;
+  bool mouse_down = false; // the left button, a finger on the touchscreen
   VirtualPad virtual_pad;
 
   ~Host() {
+    if (tracing) canvas_trace::stop();
+    gpu.stop();
     ps5_react_stop_images();
     archives::stop();
     browser_capture::stop();
@@ -232,10 +239,24 @@ struct Host {
     er_set_layers_enabled((!layers || std::atoi(layers) != 0) && presenter.layers_supported());
     // PS5_REACT_RENDER_WORKERS=1 renders single-core, for comparisons.
     const char* workers = std::getenv("PS5_REACT_RENDER_WORKERS");
-    render_worker_count = render_workers::start(workers && std::atoi(workers) > 0 ? std::atoi(workers)
-                                                                                   : render_workers::available_cpus());
+    // The GPU renderer needs the ops in drawing order: one worker.
+    const bool gpu_drawing = std::getenv("PS5_REACT_GPU") != nullptr;
+    const bool gpu_mirroring = !gpu_drawing && std::getenv("PS5_REACT_GPU_MIRROR") != nullptr;
+    render_worker_count = render_workers::start(gpu_drawing || gpu_mirroring ? 1
+                                                : workers && std::atoi(workers) > 0 ? std::atoi(workers)
+                                                                                    : render_workers::available_cpus());
     std::printf("[PS5-REACT] render workers=%d of %d, cpus=%d\n", render_worker_count, render_workers::max_workers(),
                 render_workers::available_cpus());
+    // PS5_REACT_CANVAS_TRACE=<file> lists every drawing primitive per commit (canvas_trace.hpp).
+    // PS5_REACT_GPU=1 draws with OpenGL instead of the software rasterizer (gpu_renderer.hpp);
+    // PS5_REACT_GPU_MIRROR=1 draws with both and compares the two at each shot.
+    if (gpu_drawing || gpu_mirroring) {
+      if (!gpu.start(width, height, gpu_drawing ? GpuRenderer::Mode::draw : GpuRenderer::Mode::mirror))
+        std::fprintf(stderr, "[PS5-REACT] gpu renderer: could not start\n");
+    } else if (const char* trace = std::getenv("PS5_REACT_CANVAS_TRACE")) {
+      tracing = canvas_trace::start(trace, render_worker_count);
+      if (!tracing) std::fprintf(stderr, "[PS5-REACT] canvas trace: cannot write %s\n", trace);
+    }
     if (network::start()) ps5_react_start_images();
     ps5_react_start_sound();
     ErRuntimeConfig cfg = {};
@@ -310,6 +331,21 @@ struct Host {
     JSContext* ctx = er_runtime_context();
     JSValue args[2] = {down ? JS_NewFloat64(ctx, x) : JS_NULL, down ? JS_NewFloat64(ctx, y) : JS_NULL};
     return call_input("__ps5ReactTouch", 2, args);
+  }
+
+  // A touchscreen's first finger at (x, y) in screen px, or lifted: the mouse's left button here.
+  bool screen_touch(bool down, float x, float y) {
+    JSContext* ctx = er_runtime_context();
+    JSValue args[2] = {down ? JS_NewFloat64(ctx, x) : JS_NULL, down ? JS_NewFloat64(ctx, y) : JS_NULL};
+    return call_input("__ps5ReactScreenTouch", 2, args);
+  }
+
+  // The mouse in window points as a finger in screen px: the window shows the layout scaled.
+  bool mouse_touch(bool down, int x, int y) {
+    int window_w = 0, window_h = 0;
+    SDL_GetWindowSize(window, &window_w, &window_h);
+    if (window_w <= 0 || window_h <= 0) return true;
+    return screen_touch(down, static_cast<float>(x) * width / window_w, static_cast<float>(y) * height / window_h);
   }
 
   // A development hook's result as text: strings as they are, anything else through JSON.
@@ -400,11 +436,20 @@ struct Host {
       // The preview keeps shots in the sandbox's temporary folder rather than the app's sources.
       char path[PATH_MAX];
       const std::string name = std::string("/temp0/") + (action + 5) + ".bmp";
-      const bool saved = host::resolve_path(name.c_str(), path, sizeof path) && save_screenshot(path);
+      // With the GPU drawing, the software framebuffer holds only what it left to the CPU.
+      const bool saved = host::resolve_path(name.c_str(), path, sizeof path) &&
+                         (gpu.drawing() ? gpu.save_screen(presenter, path) : save_screenshot(path));
       std::printf("[PS5-REACT] shot %s: %s\n", path, saved ? "saved" : std::strerror(errno));
+      if (saved && gpu.active() && !gpu.drawing()) {
+        const std::string base(path, std::strlen(path) - 4);
+        std::printf("[PS5-REACT] %s\n", gpu.compare(er_software_framebuffer(), presenter, base).c_str());
+      }
     } else if (!std::strncmp(action, "touch:", 6)) {
       float x = 0, y = 0;
       return touch(std::sscanf(action + 6, "%f,%f", &x, &y) == 2, x, y);
+    } else if (!std::strncmp(action, "screen:", 7)) {
+      float x = 0, y = 0;
+      return screen_touch(std::sscanf(action + 7, "%f,%f", &x, &y) == 2, x, y);
     } else return dispatch(action);
     return true;
   }
@@ -438,6 +483,12 @@ struct Host {
       } else if ((event.type == SDL_CONTROLLERTOUCHPADDOWN || event.type == SDL_CONTROLLERTOUCHPADMOTION ||
                   event.type == SDL_CONTROLLERTOUCHPADUP) && event.ctouchpad.touchpad == 0 && event.ctouchpad.finger == 0) {
         if (!touch(event.type != SDL_CONTROLLERTOUCHPADUP, event.ctouchpad.x, event.ctouchpad.y)) return false;
+      } else if ((event.type == SDL_MOUSEBUTTONDOWN || event.type == SDL_MOUSEBUTTONUP) &&
+                 event.button.button == SDL_BUTTON_LEFT) {
+        mouse_down = event.type == SDL_MOUSEBUTTONDOWN;
+        if (!mouse_touch(mouse_down, event.button.x, event.button.y)) return false;
+      } else if (event.type == SDL_MOUSEMOTION && mouse_down) {
+        if (!mouse_touch(true, event.motion.x, event.motion.y)) return false;
       } else if (event.type == SDL_CONTROLLERAXISMOTION) {
         const auto trigger = [&](bool& down, const char* name) {
           if (crossed(down, event.caxis.value / 32767.0f)) action = name;
@@ -482,7 +533,10 @@ struct Host {
       return false;
     }
     er_set_raster_deferred(false);
+    if (tracing) canvas_trace::commit_begin();
     er_commit();
+    if (tracing) canvas_trace::commit_end();
+    const bool redrawn = gpu.active() && gpu.replay();
     stats.lap(FrameStats::update, now_us());
     if (ps5_react_exit_requested()) {
       running = false;
@@ -491,7 +545,7 @@ struct Host {
     int sw = 0, sh = 0;
     SDL_GL_GetDrawableSize(window, &sw, &sh);
     const std::size_t repainted = damage_tracker_area();
-    const bool still = skip_still && !exposed && sw > 0 && sh > 0 &&
+    const bool still = skip_still && !exposed && !redrawn && sw > 0 && sh > 0 &&
                        presenter.unchanged(damage_tracker_rects(), damage_tracker_moves(), sw, sh);
     exposed = false;
     if (sw > 0 && sh > 0 && !still) {
@@ -500,7 +554,10 @@ struct Host {
       const ERLayer* layers = er_get_layers(&layer_count);
       presenter.set_layers({layers, static_cast<std::size_t>(layer_count)});
       video_layers::update(now_us(), display_frame_us);
-      if (!presenter.draw(er_software_framebuffer(), damage_tracker_rects(), damage_tracker_moves(), sw, sh)) return false;
+      const bool drawn = gpu.drawing() ? presenter.draw_texture(gpu.texture(), sw, sh)
+                                       : presenter.draw(er_software_framebuffer(), damage_tracker_rects(),
+                                                        damage_tracker_moves(), sw, sh);
+      if (!drawn) return false;
       er_perf_phase_end(ER_PERF_PHASE_PRESENT);
       {
         const GlPresenter::Timing& t = presenter.last_timing();
