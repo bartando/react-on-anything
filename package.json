@@ -18,14 +18,14 @@
   "devDependencies": {
     "@types/react": "18.3.12"
   },
-  "description": "React and JSX for standalone fullscreen PS5 homebrew, with a native macOS preview.",
+  "description": "React and JSX for fullscreen apps on the PS5, Nintendo Switch and Android TV, with a native macOS preview.",
   "author": "half144",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/half144/ps5-react.git"
+    "url": "git+https://github.com/bartando/react-on-anything.git"
   },
-  "homepage": "https://github.com/half144/ps5-react#readme",
+  "homepage": "https://github.com/bartando/react-on-anything#readme",
   "bugs": {
-    "url": "https://github.com/half144/ps5-react/issues"
+    "url": "https://github.com/bartando/react-on-anything/issues"
   }
 }

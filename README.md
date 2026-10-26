@@ -70,7 +70,7 @@ The supported development environment is **macOS on Apple Silicon**.
 2. Clone the project and install dependencies:
 
    ```sh
-   git clone https://github.com/half144/ps5-react.git
+   git clone https://github.com/bartando/react-on-anything.git
    cd react-on-anything
    python3 -m venv .venv
    source .venv/bin/activate

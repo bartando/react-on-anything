@@ -59,8 +59,14 @@ void desktop_set_controller(SDL_GameController* value) {
 }
 
 namespace host {
+// ROA_PLATFORM previews an app as another host names itself ("switch", "android", "ps5"), for UI that
+// follows Platform.OS, such as button hints. Nothing else changes.
 const char* platform_name() {
-  return "desktop";
+  static const char* name = [] {
+    const char* wanted = std::getenv("ROA_PLATFORM");
+    return wanted && *wanted ? wanted : "desktop";
+  }();
+  return name;
 }
 
 bool relaunch = false;

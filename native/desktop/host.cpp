@@ -28,6 +28,7 @@ void er_register_assets(void);
 #include "host_platform.hpp"
 #include "actions.hpp"
 #include "control.hpp"
+#include "recorder.hpp"
 #include "pad_input.hpp"
 #include "render_workers.hpp"
 #include "screenshot.hpp"
@@ -51,13 +52,18 @@ namespace {
 // Render at twice the logical resolution so rounded edges remain smooth on Retina.
 constexpr int width = ROA_WIDTH, height = ROA_HEIGHT;
 
+// While ROA_RECORD records, the clock moves one video frame per frame drawn (Recorder).
+std::int64_t recorded_us = -1;
+
 std::int64_t now_us() {
+  if (recorded_us >= 0) return recorded_us;
   static const Uint64 frequency = SDL_GetPerformanceFrequency();
   const Uint64 ticks = SDL_GetPerformanceCounter();
   return static_cast<std::int64_t>(ticks / frequency * 1000000 + ticks % frequency * 1000000 / frequency);
 }
 
 std::uint32_t perf_clock() { return static_cast<std::uint32_t>(now_us()); }
+std::uint64_t now_ms() { return static_cast<std::uint64_t>(now_us() / 1000); }
 
 void log_line(const char* line) {
   std::printf("%s\n", line);
@@ -147,6 +153,7 @@ struct Host {
   Repeater repeater;
   Control control;
   bool controlled = false;
+  Recorder recorder;
   struct Wait { int client; Uint32 until; };
   std::vector<Wait> waits;
   TriggerEdge l2, r2, key_l2, key_r2;
@@ -318,14 +325,14 @@ struct Host {
 
   bool frame(bool swap = true) {
     core.begin_frame();
-    if (!read_input() || !core.play_script(SDL_GetTicks64())) return false;
+    if (!read_input() || !core.play_script(now_ms())) return false;
     if (core.quit_requested()) running = false;
     if (controlled && !serve_control()) return false;
-    if (const char* held = repeater.due(held_down(), SDL_GetTicks64()); held && !core.dispatch(held)) return false;
+    if (const char* held = repeater.due(held_down(), now_ms()); held && !core.dispatch(held)) return false;
     if (!running) return true;
     if (key_l2.crossed(key_travel(SDL_SCANCODE_Z)) && !core.dispatch(action_name(HostAction::l2))) return false;
     if (key_r2.crossed(key_travel(SDL_SCANCODE_C)) && !core.dispatch(action_name(HostAction::r2))) return false;
-    if (!core.deliver_pad(read_gamepad(controller), SDL_GetTicks64()) || !core.advance(core.wall_elapsed_ms()))
+    if (!core.deliver_pad(read_gamepad(controller), now_ms()) || !core.advance(core.wall_elapsed_ms()))
       return false;
     if (roa_exit_requested()) {
       running = false;
@@ -340,6 +347,10 @@ struct Host {
       SDL_DisplayMode mode{};
       SDL_Delay(1000 / (SDL_GetWindowDisplayMode(window, &mode) == 0 && mode.refresh_rate > 0 ? mode.refresh_rate : 60));
     } else if (swap) {
+      if (recorder.recording()) {
+        recorder.add(sw, sh);
+        recorded_us += recorder.frame_us();
+      }
       SDL_GL_SwapWindow(window);
     }
     core.end_frame();
@@ -632,8 +643,19 @@ int main(int argc, char** argv) {
       ok = SDL_SetWindowFullscreen(host.window, SDL_WINDOW_FULLSCREEN_DESKTOP) == 0;
       SDL_ShowCursor(SDL_DISABLE);
     }
-    host.skip_still = true;
+    // ROA_RECORD=<file.mp4> records the run (ROA_RECORD_FPS frames a second, 30 by default): every
+    // frame is drawn, none skipped as unchanged.
+    if (const char* path = std::getenv("ROA_RECORD"); path && *path) {
+      const char* fps = std::getenv("ROA_RECORD_FPS");
+      host.recorder.start(path, fps ? std::atoi(fps) : 30);
+      recorded_us = now_us();
+    }
+    host.skip_still = !host.recorder.recording();
     while (ok && host.running) ok = host.frame();
+    if (host.recorder.recording()) {
+      const char* path = std::getenv("ROA_RECORD");
+      std::printf("[ROA] recorded %ld frames to %s\n", host.recorder.finish(), path);
+    }
     if (JsProfiler& profiler = host.core.profiler; profiler.running()) {
       profiler.stop();
       const char* path = std::getenv("ROA_PROFILE");

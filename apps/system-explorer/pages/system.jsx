@@ -5,7 +5,7 @@ import {useEffect, useState} from 'react';
 import {View, Text, Notifications, Linking, BackHandler, Display} from '@react-on-anything/core';
 import {Panel, Field, Button, Status, attempt, body} from '../ui.jsx';
 
-const REPO = 'https://github.com/half144/ps5-react';
+const REPO = 'https://github.com/bartando/react-on-anything';
 
 const ACTIONS = [
   ['Send notification', () => Notifications.show('Hello from System Explorer', 'Sent with React on Anything')

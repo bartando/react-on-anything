@@ -504,6 +504,13 @@ ROA_INPUT_SCRIPT="wait:3000,right*3,wait:1500,confirm,wait:2000,back,wait:2000,q
 
 The variables have no effect on `--self-test`.
 
+`ROA_RECORD=demo.mp4` records the run to a video through `ffmpeg` (from `PATH`), read back
+from GL, so nothing else on the desktop shows: at most 1920 wide, `ROA_RECORD_FPS` frames a
+second (30 by default). While it records, the preview's clock moves one video frame per frame
+drawn, so animations and `wait:` steps play at their speed in the video however slowly the
+frames were drawn; only the network keeps real time. `ROA_PLATFORM=switch` (or `android`,
+`ps5`) makes `Platform.OS` name another host, for UI that follows it, such as button hints.
+
 On the PS5, the host reads the same syntax from `dev/input-script.txt` in the
 app folder (`/app0/dev/input-script.txt`) when that file exists; commas,
 spaces and newlines all separate steps, and the `script:` lines go to the kernel
