@@ -20,6 +20,7 @@
 #include "damage_tracker.hpp"
 #include "frame_stats.hpp"
 #include "gl_presenter.hpp"
+#include "gpu_renderer.hpp"
 #include "image_loader.hpp"
 #include "host_api.hpp"
 #include "host_platform.hpp"
@@ -356,6 +357,8 @@ bool run_proof() {
   hui::ps5::Display display;
   hui::ps5::Pad pad;
   GlPresenter presenter;
+  // Draws the UI with OpenGL (gpu_renderer.hpp) instead of the render workers' software rasterizer.
+  GpuRenderer gpu;
   hui::InputTracker tracker;
   hui::PadSample samples[64];
   FrameStats stats;
@@ -410,8 +413,25 @@ bool run_proof() {
       if (std::fgets(text, sizeof text, file) && std::atoi(text) > 0) wanted = std::atoi(text);
       std::fclose(file);
     }
-    async_log::write("[PS5-REACT] render workers=%d of %d, cpus=%d", render_workers::start(wanted),
-                     render_workers::max_workers(), cpus);
+    // The GPU draws the UI unless a test deploy asks for the software rasterizer with a dev/gpu.txt
+    // holding 0, for comparisons, or 2 to time the GPU's work. It needs the drawing ops in order: one
+    // worker records them.
+    int gpu_flag = 1;
+    if (FILE* file = std::fopen(dev_path("gpu.txt").c_str(), "rb")) {
+      char text[16] = {};
+      if (std::fgets(text, sizeof text, file)) gpu_flag = std::atoi(text);
+      std::fclose(file);
+    }
+    bool gpu_drawing = gpu_flag != 0;
+    gpu.set_sync(gpu_flag == 2);
+    GpuRenderer::set_log([](const char* line) { async_log::write("%s", line); });
+    if (gpu_drawing && !gpu.start(width, height, GpuRenderer::Mode::draw)) {
+      async_log::write("[PS5-REACT] gpu renderer could not start: drawing in software");
+      gpu.stop();
+      gpu_drawing = false;
+    }
+    async_log::write("[PS5-REACT] render workers=%d of %d, cpus=%d, %s", render_workers::start(gpu_drawing ? 1 : wanted),
+                     render_workers::max_workers(), cpus, gpu_drawing ? "gpu" : "software");
   }
   // The pad opens before the bundle runs: it also initializes the user service
   // that the users, notification and browser calls need.
@@ -558,7 +578,8 @@ bool run_proof() {
             async_log::write("[PS5-REACT] script: %s", error);
         } else if (!std::strncmp(action, "shot:", 5)) {
           const std::string path = dev_path((std::string(action + 5) + ".bmp").c_str());
-          async_log::write("[PS5-REACT] shot %s: %s", path.c_str(), save_screenshot(path.c_str()) ? "saved" : std::strerror(errno));
+          const bool saved = gpu.drawing() ? gpu.save_screen(presenter, path) : save_screenshot(path.c_str());
+          async_log::write("[PS5-REACT] shot %s: %s", path.c_str(), saved ? "saved" : std::strerror(errno));
         } else if (!std::strncmp(action, "touch:", 6)) {
           float x = 0, y = 0;
           ok = touch(std::sscanf(action + 6, "%f,%f", &x, &y) == 2, x, y);
@@ -593,6 +614,7 @@ bool run_proof() {
       beat("commit");
       er_commit();
       if (*er_runtime_last_error()) { ok = false; break; }
+      const bool redrawn = gpu.active() && gpu.replay();
       stats.lap(FrameStats::update, hui::sys::monotonic_us());
       er_perf_phase_begin(ER_PERF_PHASE_PRESENT);
       beat("present");
@@ -602,11 +624,12 @@ bool run_proof() {
       video_layers::update(hui::sys::monotonic_us(), 1000000 / refresh_hz);
       // A frame that changed nothing is not presented: the screen keeps showing the last one, and the
       // loop sleeps to the next vblank instead of waiting in the driver, which costs CPU.
-      const bool still = first_present && presenter.unchanged(damage_tracker_rects(), damage_tracker_moves(),
-                                                              display.width(), display.height());
+      const bool still = first_present && !redrawn &&
+                         presenter.unchanged(damage_tracker_rects(), damage_tracker_moves(), display.width(), display.height());
       if (!still)
-        ok = presenter.draw(er_software_framebuffer(), damage_tracker_rects(), damage_tracker_moves(),
-                            display.width(), display.height());
+        ok = gpu.drawing() ? presenter.draw_texture(gpu.texture(), display.width(), display.height())
+                           : presenter.draw(er_software_framebuffer(), damage_tracker_rects(), damage_tracker_moves(),
+                                            display.width(), display.height());
       er_perf_phase_end(ER_PERF_PHASE_PRESENT);
       {
         const GlPresenter::Timing& t = presenter.last_timing();
@@ -659,7 +682,10 @@ bool run_proof() {
       ++frames;
       if (const char* line = stats.end_frame(slow_frame_us)) async_log::write("[PS5-REACT] %s", line);
       if (ps5_react_exit_requested()) break;
-      if (const int hz = ps5_react_take_refresh_request()) {
+      if (const int hz = ps5_react_take_refresh_request(); hz && gpu.drawing()) {
+        // Reopening EGL would lose the GPU renderer's picture, and the engine repaints only what changes.
+        async_log::write("[PS5-REACT] refresh %d Hz: not while the GPU renderer draws; set it in app.json", hz);
+      } else if (hz) {
         ok = switch_refresh_rate(display, presenter, layout, hz);
         refresh_hz = hz;
         mode_known = false;
@@ -688,6 +714,7 @@ bool run_proof() {
   if (runtime) er_runtime_shutdown();
   text_shaper::shutdown();
   ps5_react_stop_sound();
+  gpu.stop();
   render_workers::stop();
   if (software) er_software_backend_destroy();
   host_platform_set_pad(nullptr);

@@ -536,7 +536,7 @@ struct Host {
     if (tracing) canvas_trace::commit_begin();
     er_commit();
     if (tracing) canvas_trace::commit_end();
-    if (gpu.active()) gpu.replay();
+    const bool redrawn = gpu.active() && gpu.replay();
     stats.lap(FrameStats::update, now_us());
     if (ps5_react_exit_requested()) {
       running = false;
@@ -545,7 +545,7 @@ struct Host {
     int sw = 0, sh = 0;
     SDL_GL_GetDrawableSize(window, &sw, &sh);
     const std::size_t repainted = damage_tracker_area();
-    const bool still = skip_still && !exposed && sw > 0 && sh > 0 &&
+    const bool still = skip_still && !exposed && !redrawn && sw > 0 && sh > 0 &&
                        presenter.unchanged(damage_tracker_rects(), damage_tracker_moves(), sw, sh);
     exposed = false;
     if (sw > 0 && sh > 0 && !still) {

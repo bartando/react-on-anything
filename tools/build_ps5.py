@@ -152,7 +152,7 @@ def main():
                ROOT / "native/shared/image_loader.cpp", ROOT / "native/shared/image_api.cpp",
                ROOT / "native/shared/sound_api.cpp", layout_dirs[0] / "sounds.generated.c",
                ROOT / "native/shared/audio_sink.cpp", ROOT / "native/shared/audio_output_api.cpp", ROOT / "native/ps5/bitstream_output.cpp",
-               ROOT / "native/shared/gl_presenter.cpp", ROOT / "native/shared/gl_video.cpp", ROOT / "native/shared/gl_upscale.cpp", ROOT / "native/shared/video_api.cpp",
+               ROOT / "native/shared/gl_presenter.cpp", ROOT / "native/shared/gpu_renderer.cpp", ROOT / "native/shared/gl_video.cpp", ROOT / "native/shared/gl_upscale.cpp", ROOT / "native/shared/video_api.cpp",
                ROOT / "native/shared/frame_stats.cpp", ROOT / "native/shared/js_heap.cpp", ROOT / "native/shared/js_profiler.cpp", ROOT / "native/shared/damage_tracker.cpp", ROOT / "native/shared/render_workers.cpp", ROOT / "native/shared/input_script.cpp", ROOT / "native/shared/screenshot.cpp", ROOT / "native/shared/text_shaper.cpp", *layout_assets,
                layouts_c, *[hui / ("src/platform/ps5/" + n + ".cpp") for n in ("display_egl", "pad", "system", "audio_out")],
                hui / "src/core/input.cpp", hui / "src/audio/mixer.cpp", hui / "src/runtime/app_heap.c", hui / "src/runtime/runtime_shims.c",

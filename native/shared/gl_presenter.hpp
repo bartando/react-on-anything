@@ -37,7 +37,8 @@ public:
   void set_layers(std::span<const ERLayer> layers) { layers_ = layers; }
   // Whether the screen already shows this frame: nothing damaged or moved, the layers as last drawn,
   // and the same surface. A host can then skip draw() and the swap, and wait for the next vblank itself;
-  // on the PS5 a present costs the render thread about 2 ms of CPU even when nothing changed.
+  // on the PS5 a present costs the render thread about 2 ms of CPU even when nothing changed. After
+  // draw_texture() the software damage says nothing: the host asks only when the renderer drew nothing.
   bool unchanged(std::span<const ERRect> damage, std::span<const DamageMove> moves, int surface_width,
                  int surface_height) const;
   // Presents the texture `frame` (premultiplied, laid out like the framebuffer) in place of the software
@@ -66,6 +67,9 @@ private:
   int width_ = 0, height_ = 0, surface_width_ = 0, surface_height_ = 0;
   // Whether the framebuffer texture mirrors the engine framebuffer.
   bool synced_ = false;
+  // Whether the screen shows the GPU renderer's picture (draw_texture): unchanged() then goes by the
+  // layers alone, the caller knowing whether that picture changed.
+  bool texture_shown_ = false;
   // Texels per buffer texture (1048576 on the PS5); 0 uploads with glTexSubImage2D instead.
   int max_texels_ = 0;
   // Buffer textures for uploads, reused each present, respecified to the size of their rows.

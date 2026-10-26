@@ -139,7 +139,7 @@ std::uint32_t micros_since(std::chrono::steady_clock::time_point start) {
 bool GlPresenter::init(int width, int height) {
   if (width <= 0 || height <= 0 || composite_program_) return false;
   width_ = width; height_ = height;
-  synced_ = false;
+  synced_ = texture_shown_ = false;
   GLuint vertex = compile(GL_VERTEX_SHADER, vertex_source);
   GLuint composite = compile(GL_FRAGMENT_SHADER, composite_fragment_source);
   GLuint stage = compile(GL_FRAGMENT_SHADER, stage_fragment_source);
@@ -172,7 +172,7 @@ bool GlPresenter::init(int width, int height) {
 
 bool GlPresenter::draw(const std::uint32_t* argb, int sw, int sh) {
   if (!composite_program_ || !argb || sw <= 0 || sh <= 0) return false;
-  synced_ = false;
+  synced_ = texture_shown_ = false;
   upload_rows(frame_, frame_fbo_, width_, height_, argb, 0, height_);
   return present(sw, sh);
 }
@@ -183,6 +183,7 @@ bool GlPresenter::draw(const std::uint32_t* argb, std::span<const ERRect> damage
   timing_ = {};
   const auto start = std::chrono::steady_clock::now();
   bool full = !synced_;
+  texture_shown_ = false;
   for (const DamageMove& m : moves)
     if (!full && !move(m)) full = true;
   if (full) {
@@ -200,7 +201,7 @@ bool GlPresenter::draw(const std::uint32_t* argb, std::span<const ERRect> damage
 
 bool GlPresenter::unchanged(std::span<const ERRect> damage, std::span<const DamageMove> moves, int sw,
                             int sh) const {
-  if (!damage.empty() || !moves.empty() || !synced_ || sw != surface_width_ || sh != surface_height_ ||
+  if (!damage.empty() || !moves.empty() || !(synced_ || texture_shown_) || sw != surface_width_ || sh != surface_height_ ||
       layers_.size() != drawn_layers_.size())
     return false;
   for (std::size_t i = 0; i < layers_.size(); ++i) {
@@ -502,6 +503,7 @@ bool GlPresenter::draw_texture(unsigned int frame, int sw, int sh) {
   if (!composite_program_ || !frame || sw <= 0 || sh <= 0) return false;
   timing_ = {};
   synced_ = false;
+  texture_shown_ = true;
   frame_override_ = frame;
   const auto drawing = std::chrono::steady_clock::now();
   const bool ok = present(sw, sh);
@@ -551,5 +553,5 @@ void GlPresenter::release() {
   if (vao_) glDeleteVertexArrays(1, &vao_);
   frame_ = frame_fbo_ = scratch_ = scratch_fbo_ = composite_program_ = stage_program_ = vao_ = 0;
   max_texels_ = 0;
-  synced_ = false;
+  synced_ = texture_shown_ = false;
 }

@@ -16,6 +16,7 @@ extern "C" {
 #include <array>
 #include <chrono>
 #include <cmath>
+#include <cstdarg>
 #include <cstdio>
 #include <cstring>
 #include <mutex>
@@ -28,6 +29,19 @@ struct GpuRenderer::Op {
 };
 
 namespace {
+// Where the renderer's lines go: stdout, unless the host gives its own log (GpuRenderer::set_log).
+void print_line(const char* line) { std::printf("%s\n", line); }
+void (*log_sink)(const char*) = print_line;
+
+__attribute__((format(printf, 1, 2))) void log_line(const char* format, ...) {
+  char line[512];
+  va_list arguments;
+  va_start(arguments, format);
+  std::vsnprintf(line, sizeof line, format, arguments);
+  va_end(arguments);
+  log_sink(line);
+}
+
 
 // Kept pictures not drawn for this many replays go, and the oldest go past the byte budget.
 constexpr std::uint64_t kPixelsKeepReplays = 120;
@@ -54,9 +68,51 @@ std::uint64_t picture_hash(const std::uint32_t* px, int stride, int w, int h) {
 
 std::mutex record_lock;
 
+// A draw's parameters are a record of kRecord vec4s in a buffer texture, so draws in a row go to the GPU as
+// instances of one call: the PS5's GL charges about 80us a call, whatever it draws. Record 0 is the quad
+// to cover, already cut to the clip rect; 1 holds the kind, the alpha, the rounded clips (an offset into
+// the batch's clip sets, or -1) and the texture unit; the rest are the kind's own (see draw_ops).
+constexpr int kRecord = 11;
+constexpr int kUnits = 8;
+
+constexpr const char* kVertex = R"(
+uniform vec2 u_size;
+uniform vec2 u_origin;
+uniform samplerBuffer u_records;
+uniform int u_first;
+flat out int v_record;
+void main() {
+  v_record = u_first + gl_InstanceID * kRecord;
+  vec4 quad = texelFetch(u_records, v_record);
+  vec2 corner = vec2(float(gl_VertexID & 1), float(gl_VertexID >> 1));
+  vec2 local = quad.xy + corner * quad.zw - u_origin;
+  gl_Position = vec4(local / u_size * 2.0 - 1.0, 0.0, 1.0);
+}
+)";
+
+// Rounded rects: mode 0 fills, 1 fills inside a border, 2 strokes the border only; 3 and 4 are linear and
+// radial gradients; 5 is the animated focus ring (border_sweep.c), a ring inside the rect, bright at its
+// head and fading behind it. Images: 10 a group's texture shifted, 11 transformed, 12 a glyph, 13 an
+// image region scaled.
+constexpr const char* kFragment = R"(
+uniform vec2 u_origin;
+uniform samplerBuffer u_records;
+uniform int u_clip_first;
+uniform sampler2D u_tex0;
+uniform sampler2D u_tex1;
+uniform sampler2D u_tex2;
+uniform sampler2D u_tex3;
+uniform sampler2D u_tex4;
+uniform sampler2D u_tex5;
+uniform sampler2D u_tex6;
+uniform sampler2D u_tex7;
+flat in int v_record;
+out vec4 frag;
+const float kPi = 3.14159265;
+vec4 rec(int i) { return texelFetch(u_records, v_record + i); }
+
 // The pixel's coverage by a rounded rect (x, y, w, h; radii tl, tr, br, bl), from its signed distance at
 // the pixel centre: the software rasterizer's analytic fringe, within a level or two.
-constexpr const char* kCoverage = R"(
 float rbox(vec2 c, vec4 rect, vec4 radii) {
   vec2 half_size = rect.zw * 0.5;
   vec2 p = c - (rect.xy + half_size);
@@ -65,57 +121,45 @@ float rbox(vec2 c, vec4 rect, vec4 radii) {
   float d = min(max(q.x, q.y), 0.0) + length(max(q, 0.0)) - r;
   return clamp(0.5 - d, 0.0, 1.0);
 }
-uniform int u_clips;
-uniform vec4 u_clip_rect[4];
-uniform vec4 u_clip_radii[4];
-// Rounded clips: rect clips are the scissor.
-float clipped(vec2 c) {
+// Rounded clips, a count then rect and radii pairs: rect clips cut the quad.
+float clipped(vec2 c, int at) {
+  if (at < 0) return 1.0;
+  int base = u_clip_first + at;
+  int count = int(texelFetch(u_records, base).x);
   float cov = 1.0;
-  for (int i = 0; i < u_clips; i++) cov *= rbox(c, u_clip_rect[i], u_clip_radii[i]);
+  for (int i = 0; i < count; i++)
+    cov *= rbox(c, texelFetch(u_records, base + 1 + i * 2), texelFetch(u_records, base + 2 + i * 2));
   return cov;
 }
-)";
 
-constexpr const char* kVertex = GLSL_VERSION R"(
-uniform vec2 u_size;
-uniform vec2 u_origin;
-uniform vec4 u_quad;
-void main() {
-  vec2 corner = vec2(float(gl_VertexID & 1), float(gl_VertexID >> 1));
-  vec2 local = u_quad.xy + corner * u_quad.zw - u_origin;
-  gl_Position = vec4(local / u_size * 2.0 - 1.0, 0.0, 1.0);
+int g_unit;
+vec4 fetch(ivec2 p) {
+  switch (g_unit) {
+    case 0: return texelFetch(u_tex0, p, 0);
+    case 1: return texelFetch(u_tex1, p, 0);
+    case 2: return texelFetch(u_tex2, p, 0);
+    case 3: return texelFetch(u_tex3, p, 0);
+    case 4: return texelFetch(u_tex4, p, 0);
+    case 5: return texelFetch(u_tex5, p, 0);
+    case 6: return texelFetch(u_tex6, p, 0);
+    default: return texelFetch(u_tex7, p, 0);
+  }
 }
-)";
 
-// Rounded rects: mode 0 fills, 1 fills inside a border, 2 strokes the border only. Mode 5 is the
-// animated focus ring (border_sweep.c): a ring inside the rect, bright at its head and fading behind it.
-constexpr const char* kShapeFragment = R"(
-uniform vec2 u_origin;
-uniform vec4 u_rect;
-uniform vec4 u_radii;
-uniform vec4 u_edges;
-uniform vec4 u_inner_radii;
-uniform int u_mode;
-uniform vec4 u_fill;
-uniform vec4 u_edge_color[4];
-uniform float u_alpha;
-// Gradients (mode 3 linear, 4 radial), as the software ramp: a table of n premultiplied 8.8 colours,
-// read at a fixed-point index and dithered with a 4x4 Bayer threshold per screen pixel.
-uniform vec4 u_stop_color[4];  // straight a, r, g, b in 0..255
-uniform float u_stop_pos[4];
-uniform int u_stop_count;
-uniform vec2 u_dir;
-uniform float u_min_p;
-uniform float u_to_idx;
-uniform int u_step;
-uniform int u_lut_n;
-// The sweep: the ring (outer radius, width, inner radius), its centre line (straight half-lengths a, b and
-// corner radius), and the head's place on the perimeter and the tail's length, as fractions of it.
-uniform vec3 u_ring;
-uniform vec3 u_line;
-uniform vec2 u_sweep;
-out vec4 frag;
-const float kPi = 3.14159265;
+// Shapes. Record 2 is the rect; then for modes 0-2: radii, fill, edges, inner radii and the four edge
+// colours; gradients: radii, four stop colours (straight a, r, g, b in 0..255), their positions, (count,
+// direction, smallest projection), (index scale, index step as int bits, table size); the sweep: fill,
+// ring (outer radius, width, inner radius), centre line (straight half-lengths a, b and corner radius),
+// and the head's place on the perimeter and the tail's length, as fractions of it.
+vec4 g_rect, g_radii, g_fill, g_edges, g_inner_radii;
+vec4 g_edge_color[4];
+vec4 g_stop_color[4];
+float g_stop_pos[4];
+int g_mode, g_stop_count, g_step, g_lut_n;
+vec2 g_dir;
+float g_min_p, g_to_idx;
+vec3 g_ring, g_line;
+vec2 g_sweep;
 float sd_rrect(vec2 p, vec2 half_size, float r) {
   vec2 q = abs(p) - (half_size - r);
   return length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - r;
@@ -137,34 +181,36 @@ float perimeter_at(vec2 p, float a, float b, float r) {
 }
 float sweep_alpha(float t) {
   const float lead = 0.01;
-  float d = u_sweep.x - t;
+  float d = g_sweep.x - t;
   d -= floor(d);
   if (d > 1.0 - lead) return (d - (1.0 - lead)) / lead;
-  if (d >= u_sweep.y) return 0.0;
-  float f = 1.0 - d / u_sweep.y;
+  if (d >= g_sweep.y) return 0.0;
+  float f = 1.0 - d / g_sweep.y;
   return f * f;
 }
 vec4 sweep(vec2 c) {
-  vec2 half_size = u_rect.zw * 0.5;
-  vec2 p = c - (u_rect.xy + half_size);
-  float cov = clamp(0.5 - sd_rrect(p, half_size, u_ring.x), 0.0, 1.0);
-  cov *= clamp(0.5 + sd_rrect(p, half_size - u_ring.y, u_ring.z), 0.0, 1.0);
-  return u_fill * (cov * sweep_alpha(perimeter_at(p, u_line.x, u_line.y, u_line.z)));
+  vec2 half_size = g_rect.zw * 0.5;
+  vec2 p = c - (g_rect.xy + half_size);
+  float cov = clamp(0.5 - sd_rrect(p, half_size, g_ring.x), 0.0, 1.0);
+  cov *= clamp(0.5 + sd_rrect(p, half_size - g_ring.y, g_ring.z), 0.0, 1.0);
+  return g_fill * (cov * sweep_alpha(perimeter_at(p, g_line.x, g_line.y, g_line.z)));
 }
+// Gradients as the software ramp: a table of n premultiplied 8.8 colours, read at a fixed-point index and
+// dithered with a 4x4 Bayer threshold per screen pixel.
 const int kBayer[16] = int[16](0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5);
 vec4 premul_f(vec4 s) { return vec4(s.x, s.y * s.x / 255.0, s.z * s.x / 255.0, s.w * s.x / 255.0); }
 vec4 lut(int idx) {
-  float t = float(idx) / float(u_lut_n - 1);
-  int last = u_stop_count - 1;
+  float t = float(idx) / float(g_lut_n - 1);
+  int last = g_stop_count - 1;
   vec4 c;
-  if (t <= u_stop_pos[0]) c = premul_f(u_stop_color[0]);
-  else if (t >= u_stop_pos[last]) c = premul_f(u_stop_color[last]);
+  if (t <= g_stop_pos[0]) c = premul_f(g_stop_color[0]);
+  else if (t >= g_stop_pos[last]) c = premul_f(g_stop_color[last]);
   else {
     int seg = 0;
-    for (int i = 0; i < 3; i++) if (i < last && t > u_stop_pos[i + 1]) seg = i + 1;
-    vec4 c0 = premul_f(u_stop_color[seg]), c1 = premul_f(u_stop_color[seg + 1]);
-    float span = u_stop_pos[seg + 1] - u_stop_pos[seg];
-    float lt = span > 0.0 ? (t - u_stop_pos[seg]) / span : 1.0;
+    for (int i = 0; i < 3; i++) if (i < last && t > g_stop_pos[i + 1]) seg = i + 1;
+    vec4 c0 = premul_f(g_stop_color[seg]), c1 = premul_f(g_stop_color[seg + 1]);
+    float span = g_stop_pos[seg + 1] - g_stop_pos[seg];
+    float lt = span > 0.0 ? (t - g_stop_pos[seg]) / span : 1.0;
     c = c0 + (c1 - c0) * lt;
   }
   vec4 v = floor(c * 256.0 + 0.5);
@@ -172,69 +218,70 @@ vec4 lut(int idx) {
 }
 vec4 gradient(vec2 c) {
   ivec2 screen = ivec2(floor(c));
-  ivec2 local = screen - ivec2(u_rect.xy);
+  ivec2 local = screen - ivec2(g_rect.xy);
   int idx;
-  if (u_mode == 3) {
-    int f = int(round((float(local.y) * u_dir.y - u_min_p) * u_to_idx * 65536.0)) + local.x * u_step;
-    idx = clamp((f + 32768) >> 16, 0, u_lut_n - 1);
+  if (g_mode == 3) {
+    int f = int(round((float(local.y) * g_dir.y - g_min_p) * g_to_idx * 65536.0)) + local.x * g_step;
+    idx = clamp((f + 32768) >> 16, 0, g_lut_n - 1);
   } else {
-    vec2 centre = (u_rect.zw - 1.0) * 0.5;
+    vec2 centre = (g_rect.zw - 1.0) * 0.5;
     vec2 d = vec2(local) - centre;
-    idx = min(int(sqrt(d.x * d.x + d.y * d.y) * u_to_idx + 0.5), u_lut_n - 1);
+    idx = min(int(sqrt(d.x * d.x + d.y * d.y) * g_to_idx + 0.5), g_lut_n - 1);
   }
   float threshold = float(kBayer[(screen.y & 3) * 4 + (screen.x & 3)] * 16 + 8);
   vec4 argb = floor((lut(idx) + threshold) / 256.0);
   return vec4(argb.yzw, argb.x) / 255.0;
 }
 vec4 edge_color(vec2 c, vec4 inner) {
-  float dl = (inner.x - c.x) / max(u_edges.x, 0.001);
-  float dt = (inner.y - c.y) / max(u_edges.y, 0.001);
-  float dr = (c.x - inner.x - inner.z) / max(u_edges.z, 0.001);
-  float db = (c.y - inner.y - inner.w) / max(u_edges.w, 0.001);
-  float best = dl; vec4 color = u_edge_color[0];
-  if (dt > best) { best = dt; color = u_edge_color[1]; }
-  if (dr > best) { best = dr; color = u_edge_color[2]; }
-  if (db > best) { best = db; color = u_edge_color[3]; }
+  float dl = (inner.x - c.x) / max(g_edges.x, 0.001);
+  float dt = (inner.y - c.y) / max(g_edges.y, 0.001);
+  float dr = (c.x - inner.x - inner.z) / max(g_edges.z, 0.001);
+  float db = (c.y - inner.y - inner.w) / max(g_edges.w, 0.001);
+  float best = dl; vec4 color = g_edge_color[0];
+  if (dt > best) { best = dt; color = g_edge_color[1]; }
+  if (dr > best) { best = dr; color = g_edge_color[2]; }
+  if (db > best) { best = db; color = g_edge_color[3]; }
   return color;
 }
-void main() {
-  vec2 c = gl_FragCoord.xy + u_origin;
-  float outer = rbox(c, u_rect, u_radii);
-  vec4 color;
-  if (u_mode == 0) {
-    color = u_fill * outer;
-  } else if (u_mode == 5) {
-    color = sweep(c);
-  } else if (u_mode >= 3) {
-    color = gradient(c) * outer;
-  } else {
-    vec4 inner = vec4(u_rect.xy + u_edges.xy, u_rect.zw - u_edges.xy - u_edges.zw);
-    float in_cov = (inner.z > 0.0 && inner.w > 0.0) ? rbox(c, inner, u_inner_radii) : 0.0;
-    vec4 fill = u_mode == 2 ? vec4(0.0) : u_fill;
-    color = edge_color(c, inner) * max(outer - in_cov, 0.0) + fill * min(in_cov, outer);
+vec4 shape(vec2 c, int mode) {
+  g_mode = mode;
+  g_rect = rec(2);
+  if (mode == 5) {
+    g_fill = rec(3);
+    g_ring = rec(4).xyz;
+    g_line = rec(5).xyz;
+    g_sweep = rec(6).xy;
+    return sweep(c);
   }
-  frag = color * (u_alpha * clipped(c));
+  g_radii = rec(3);
+  float outer = rbox(c, g_rect, g_radii);
+  if (mode == 0) return rec(4) * outer;
+  if (mode >= 3) {
+    for (int i = 0; i < 4; i++) g_stop_color[i] = rec(4 + i);
+    vec4 pos = rec(8), a = rec(9), b = rec(10);
+    g_stop_pos = float[4](pos.x, pos.y, pos.z, pos.w);
+    g_stop_count = int(a.x);
+    g_dir = a.yz;
+    g_min_p = a.w;
+    g_to_idx = b.x;
+    g_step = floatBitsToInt(b.y);
+    g_lut_n = int(b.z);
+    return gradient(c) * outer;
+  }
+  g_fill = rec(4);
+  g_edges = rec(5);
+  g_inner_radii = rec(6);
+  for (int i = 0; i < 4; i++) g_edge_color[i] = rec(7 + i);
+  vec4 inner = vec4(g_rect.xy + g_edges.xy, g_rect.zw - g_edges.xy - g_edges.zw);
+  float in_cov = (inner.z > 0.0 && inner.w > 0.0) ? rbox(c, inner, g_inner_radii) : 0.0;
+  vec4 fill = mode == 2 ? vec4(0.0) : g_fill;
+  return edge_color(c, inner) * max(outer - in_cov, 0.0) + fill * min(in_cov, outer);
 }
-)";
 
-// Pixels from a texture: kind 0 copies texel (floor(c) - shift), 1 maps the pixel through an inverse
-// 2D transform and samples bilinearly with 8-bit weights, as the software transform does.
-constexpr const char* kImageFragment = R"(
-uniform vec2 u_origin;
-uniform sampler2D u_tex;
-uniform int u_kind;
-uniform vec2 u_shift;
-uniform vec2 u_src_size;
-uniform float u_m[6];
-uniform float u_alpha;
-uniform vec4 u_color;
-uniform int u_italic;
-uniform vec4 u_dst;       // image region: where it lands
-uniform vec4 u_src;       // and the part of the image it scales
-uniform vec4 u_tint;      // rgb 0..255, a = 1 when tinted
-uniform vec4 u_mask;      // the box a rounded image is cut to
-uniform vec4 u_mask_radii;
-out vec4 frag;
+// Images. Record 2 is (shift, source size); then a transform's matrix (ia ib ic id, itx ity); a glyph's
+// colour and italic mode; an image region's destination, source part, tint (rgb 0..255, a = 1 when
+// tinted), and the box a rounded image is cut to with its radii.
+vec2 g_shift, g_src_size;
 // One axis of the software scaler: the source position of destination pixel d, clamped to the region,
 // as two texels and an 8-bit weight.
 ivec3 axis(float start, float len, float dst_len, int d) {
@@ -249,51 +296,63 @@ vec4 lerp8(vec4 a, vec4 b, int f) {
   return floor((floor(a * 255.0 + 0.5) * float(256 - f) + floor(b * 255.0 + 0.5) * float(f)) / 256.0) / 255.0;
 }
 float cov(int d, int row) {
-  if (d < 0 || float(d) >= u_src_size.x) return 0.0;
-  return texelFetch(u_tex, ivec2(d, row), 0).r;
+  if (d < 0 || float(d) >= g_src_size.x) return 0.0;
+  return fetch(ivec2(d, row)).r;
 }
 vec4 tap(ivec2 t) {
-  if (t.x < 0 || t.y < 0 || float(t.x) >= u_src_size.x || float(t.y) >= u_src_size.y) return vec4(0.0);
-  return texelFetch(u_tex, t, 0);
+  if (t.x < 0 || t.y < 0 || float(t.x) >= g_src_size.x || float(t.y) >= g_src_size.y) return vec4(0.0);
+  return fetch(t);
 }
-void main() {
-  vec2 c = gl_FragCoord.xy + u_origin;
+vec4 image(vec2 c, int kind) {
+  vec4 at = rec(2);
+  g_shift = at.xy;
+  g_src_size = at.zw;
   vec2 s = floor(c);
-  vec4 color;
-  if (u_kind == 0) {
-    color = tap(ivec2(s - u_shift));
-  } else if (u_kind == 3) {
-    ivec2 d = ivec2(s - u_dst.xy);
-    ivec3 cx = axis(u_src.x, u_src.z, u_dst.z, d.x);
-    ivec3 cy = axis(u_src.y, u_src.w, u_dst.w, d.y);
-    vec4 top = lerp8(texelFetch(u_tex, ivec2(cx.x, cy.x), 0), texelFetch(u_tex, ivec2(cx.y, cy.x), 0), cx.z);
-    vec4 bottom = lerp8(texelFetch(u_tex, ivec2(cx.x, cy.y), 0), texelFetch(u_tex, ivec2(cx.y, cy.y), 0), cx.z);
-    color = lerp8(top, bottom, cy.z);
-    if (u_tint.a > 0.0) color.rgb = floor(u_tint.rgb * floor(color.a * 255.0 + 0.5) / 255.0) / 255.0;
-    if (u_mask.z > 0.0) color *= rbox(c, u_mask, u_mask_radii);
-  } else if (u_kind == 2) {
+  if (kind == 0) return tap(ivec2(s - g_shift));
+  if (kind == 3) {
+    vec4 dst = rec(3), src = rec(4), tint = rec(5), mask = rec(6);
+    ivec2 d = ivec2(s - dst.xy);
+    ivec3 cx = axis(src.x, src.z, dst.z, d.x);
+    ivec3 cy = axis(src.y, src.w, dst.w, d.y);
+    vec4 top = lerp8(fetch(ivec2(cx.x, cy.x)), fetch(ivec2(cx.y, cy.x)), cx.z);
+    vec4 bottom = lerp8(fetch(ivec2(cx.x, cy.y)), fetch(ivec2(cx.y, cy.y)), cx.z);
+    vec4 color = lerp8(top, bottom, cy.z);
+    if (tint.a > 0.0) color.rgb = floor(tint.rgb * floor(color.a * 255.0 + 0.5) / 255.0) / 255.0;
+    if (mask.z > 0.0) color *= rbox(c, mask, rec(7));
+    return color;
+  }
+  if (kind == 2) {
     // A glyph's coverage times its colour; italic shears each row right by (height - 1 - row) * 0.2,
     // the fraction split between two columns as the software path does (the 1-bit path drops it).
-    ivec2 local = ivec2(s - u_shift);
-    if (local.y < 0 || float(local.y) >= u_src_size.y) discard;
-    float shift = u_italic != 0 ? (u_src_size.y - 1.0 - float(local.y)) * 0.2 : 0.0;
+    int italic = int(rec(4).x);
+    ivec2 local = ivec2(s - g_shift);
+    if (local.y < 0 || float(local.y) >= g_src_size.y) discard;
+    float shift = italic != 0 ? (g_src_size.y - 1.0 - float(local.y)) * 0.2 : 0.0;
     int whole = int(shift);
-    float part = u_italic == 2 ? shift - float(whole) : 0.0;
+    float part = italic == 2 ? shift - float(whole) : 0.0;
     int d = local.x - whole;
-    float c = part < 0.005 ? cov(d, local.y) : cov(d, local.y) * (1.0 - part) + cov(d - 1, local.y) * part;
-    color = u_color * c;
-  } else {
-    float fx = u_m[0] * s.x + u_m[2] * s.y + u_m[4] - u_shift.x;
-    float fy = u_m[1] * s.x + u_m[3] * s.y + u_m[5] - u_shift.y;
-    if (!(fx >= -1.0 && fx < u_src_size.x && fy >= -1.0 && fy < u_src_size.y)) discard;
-    vec2 f0 = floor(vec2(fx, fy));
-    vec2 w = floor((vec2(fx, fy) - f0) * 256.0) / 256.0;
-    ivec2 t = ivec2(f0);
-    vec4 top = mix(tap(t), tap(t + ivec2(1, 0)), w.x);
-    vec4 bottom = mix(tap(t + ivec2(0, 1)), tap(t + ivec2(1, 1)), w.x);
-    color = mix(top, bottom, w.y);
+    float k = part < 0.005 ? cov(d, local.y) : cov(d, local.y) * (1.0 - part) + cov(d - 1, local.y) * part;
+    return rec(3) * k;
   }
-  frag = color * (u_alpha * clipped(c));
+  vec4 m = rec(3), t = rec(4);
+  float fx = m.x * s.x + m.z * s.y + t.x - g_shift.x;
+  float fy = m.y * s.x + m.w * s.y + t.y - g_shift.y;
+  if (!(fx >= -1.0 && fx < g_src_size.x && fy >= -1.0 && fy < g_src_size.y)) discard;
+  vec2 f0 = floor(vec2(fx, fy));
+  vec2 w = floor((vec2(fx, fy) - f0) * 256.0) / 256.0;
+  ivec2 i = ivec2(f0);
+  vec4 top = mix(tap(i), tap(i + ivec2(1, 0)), w.x);
+  vec4 bottom = mix(tap(i + ivec2(0, 1)), tap(i + ivec2(1, 1)), w.x);
+  return mix(top, bottom, w.y);
+}
+
+void main() {
+  vec4 head = rec(1);
+  int kind = int(head.x);
+  g_unit = int(head.w);
+  vec2 c = gl_FragCoord.xy + u_origin;
+  vec4 color = kind < 10 ? shape(c, kind) : image(c, kind - 10);
+  frag = color * (head.y * clipped(c, int(head.z)));
 }
 )";
 
@@ -307,16 +366,17 @@ GLuint compile(GLenum type, const std::string& source) {
   if (!ok) {
     char log[2048];
     glGetShaderInfoLog(shader, sizeof log, nullptr, log);
-    std::fprintf(stderr, "[PS5-REACT] gpu mirror: shader failed: %s\n", log);
+    log_line("[PS5-REACT] gpu: shader failed: %s", log);
     glDeleteShader(shader);
     return 0;
   }
   return shader;
 }
 
-GLuint link(const char* fragment_body) {
-  GLuint vertex = compile(GL_VERTEX_SHADER, kVertex);
-  GLuint fragment = compile(GL_FRAGMENT_SHADER, std::string(GLSL_VERSION) + kCoverage + fragment_body);
+GLuint link() {
+  const std::string prelude = std::string(GLSL_VERSION) + "const int kRecord = " + std::to_string(kRecord) + ";\n";
+  GLuint vertex = compile(GL_VERTEX_SHADER, prelude + kVertex);
+  GLuint fragment = compile(GL_FRAGMENT_SHADER, prelude + kFragment);
   if (!vertex || !fragment) return 0;
   GLuint program = glCreateProgram();
   glAttachShader(program, vertex);
@@ -327,6 +387,9 @@ GLuint link(const char* fragment_body) {
   GLint ok = 0;
   glGetProgramiv(program, GL_LINK_STATUS, &ok);
   if (!ok) {
+    char log[2048];
+    glGetProgramInfoLog(program, sizeof log, nullptr, log);
+    log_line("[PS5-REACT] gpu: program failed: %s", log);
     glDeleteProgram(program);
     return 0;
   }
@@ -401,14 +464,28 @@ bool write_bmp(const std::string& path, const std::vector<std::uint32_t>& argb, 
 
 GpuRenderer::~GpuRenderer() { stop(); }
 
+void GpuRenderer::set_log(void (*log)(const char* line)) { log_sink = log ? log : print_line; }
+
 bool GpuRenderer::start(int width, int height, Mode mode) {
   mode_ = mode;
   width_ = width;
   height_ = height;
-  shape_ = link(kShapeFragment);
-  image_ = link(kImageFragment);
-  if (!shape_ || !image_) return false;
+  program_ = link();
+  if (!program_) return false;
   glGenVertexArrays(1, &vao_);
+  GLint most = 0;
+  glGetIntegerv(GL_MAX_TEXTURE_BUFFER_SIZE, &most);
+  buffer_texels_ = std::min(most, kBufferTexels);
+  if (buffer_texels_ < kBatchDraws * (kRecord + 9)) return false;
+  glGenBuffers(1, &records_buffer_);
+  glBindBuffer(GL_TEXTURE_BUFFER, records_buffer_);
+  glBufferData(GL_TEXTURE_BUFFER, static_cast<GLsizeiptr>(buffer_texels_) * 16, nullptr, GL_STREAM_DRAW);
+  glGenTextures(1, &records_texture_);
+  glBindTexture(GL_TEXTURE_BUFFER, records_texture_);
+  glTexBuffer(GL_TEXTURE_BUFFER, GL_RGBA32F, records_buffer_);
+  glBindTexture(GL_TEXTURE_BUFFER, 0);
+  glBindBuffer(GL_TEXTURE_BUFFER, 0);
+  buffer_at_ = 0;
   if (!make_target(width, height, target_.texture, target_.fbo) ||
       !make_target(width, height, copy_.texture, copy_.fbo))
     return false;
@@ -439,9 +516,10 @@ void GpuRenderer::stop() {
   if (vao_) glDeleteVertexArrays(1, &vao_);
   uniforms_.clear();
   uniform_index_.clear();
-  if (shape_) glDeleteProgram(shape_);
-  if (image_) glDeleteProgram(image_);
-  vao_ = shape_ = image_ = 0;
+  if (program_) glDeleteProgram(program_);
+  if (records_texture_) glDeleteTextures(1, &records_texture_);
+  if (records_buffer_) glDeleteBuffers(1, &records_buffer_);
+  vao_ = program_ = records_texture_ = records_buffer_ = 0;
   delete ops_;
   ops_ = nullptr;
 }
@@ -496,6 +574,15 @@ bool GpuRenderer::captures(int kind) {
 int GpuRenderer::record(const ERCanvasOp* op, void* self_raw) {
   auto* self = static_cast<GpuRenderer*>(self_raw);
   std::lock_guard<std::mutex> guard(record_lock);
+  const auto began = std::chrono::steady_clock::now();
+  const int answer = self->keep(op);
+  self->stats_.record_us += static_cast<std::uint64_t>(
+      std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - began).count());
+  return answer;
+}
+
+int GpuRenderer::keep(const ERCanvasOp* op) {
+  GpuRenderer* self = this;
   // What a GPU renderer is handed: the ops at depth 0, and the glyphs of a text block it leaves to the
   // engine to lay out.
   if (op->kind >= ER_CANVAS_OP_COUNT ||
@@ -568,16 +655,6 @@ void GpuRenderer::set_f(unsigned int program, const char* name, std::initializer
     case 3: glUniform3fv(u.location, 1, values.begin()); break;
     default: glUniform4fv(u.location, 1, values.begin()); break;
   }
-}
-
-void GpuRenderer::set_v4(unsigned int program, const char* name, const float* values, int count) {
-  Uniform& u = uniform(program, name);
-  if (changes(u, values, count * 4 * static_cast<int>(sizeof(float)))) glUniform4fv(u.location, count, values);
-}
-
-void GpuRenderer::set_v1(unsigned int program, const char* name, const float* values, int count) {
-  Uniform& u = uniform(program, name);
-  if (changes(u, values, count * static_cast<int>(sizeof(float)))) glUniform1fv(u.location, count, values);
 }
 
 GpuRenderer::Group& GpuRenderer::group(const void* buffer, int w, int h) {
@@ -696,12 +773,24 @@ void GpuRenderer::evict_pixels() {
   }
 }
 
-void GpuRenderer::replay() {
-  if (!active()) return;
+bool GpuRenderer::replay() {
+  if (!active()) return false;
   std::lock_guard<std::mutex> guard(record_lock);
   const auto began = std::chrono::steady_clock::now();
   stats_.ops += ops_->size();
-  if (!ops_->empty()) draw_ops();
+  const bool drew = !ops_->empty();
+  if (drew) {
+    draw_ops();
+    const auto submitted = std::chrono::steady_clock::now();
+    stats_.submit_us += static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(submitted - began).count());
+    if (sync_) {
+      glFinish();
+      const auto finish = static_cast<std::uint64_t>(
+          std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - submitted).count());
+      stats_.finish_us += finish;
+      stats_.max_finish_us = std::max(stats_.max_finish_us, finish);
+    }
+  }
   ops_->clear();
   ++replay_serial_;
   evict_pixels();
@@ -714,20 +803,23 @@ void GpuRenderer::replay() {
   if (!stats_.window_start_us) stats_.window_start_us = now_us;
   if (now_us - stats_.window_start_us >= 2000000) {
     const double n = static_cast<double>(stats_.replays);
-    std::printf("[PS5-REACT] gpu: replays=%llu avg=%.2fms max=%.2fms | per replay: ops=%.0f draws=%.0f regroups=%.1f "
-                "pixels=%.1f (%.0fKB) uploads=%.1f\n",
-                static_cast<unsigned long long>(stats_.replays), stats_.replay_us / n / 1000.0,
-                stats_.max_replay_us / 1000.0, stats_.ops / n, stats_.draws / n, stats_.regroups / n,
-                stats_.pixel_ops / n, stats_.pixel_bytes / n / 1024.0, stats_.uploads / n);
+    log_line("[PS5-REACT] gpu: replays=%llu avg=%.2fms max=%.2fms (submit %.2f%s) record=%.2fms | per replay: ops=%.0f "
+             "draws=%.0f in %.1f calls, regroups=%.1f pixels=%.1f (%.0fKB) uploads=%.1f",
+             static_cast<unsigned long long>(stats_.replays), stats_.replay_us / n / 1000.0,
+             stats_.max_replay_us / 1000.0, stats_.submit_us / n / 1000.0,
+             sync_ ? (", finish " + std::to_string(stats_.finish_us / n / 1000.0).substr(0, 5) + " max " +
+                      std::to_string(stats_.max_finish_us / 1000.0).substr(0, 5)).c_str() : "",
+             stats_.record_us / n / 1000.0, stats_.ops / n, stats_.draws / n, stats_.batches / n, stats_.regroups / n,
+             stats_.pixel_ops / n, stats_.pixel_bytes / n / 1024.0, stats_.uploads / n);
     constexpr const char* kUploadNames[] = {"images", "glyphs", "pixels"};
     for (int kind = 0; kind < 3; kind++)
       if (stats_.upload_count[kind])
-        std::printf("[PS5-REACT] gpu:   upload %s: %llu, %.0fKB, %.1fms total, %.1fms max\n", kUploadNames[kind],
+        log_line("[PS5-REACT] gpu:   upload %s: %llu, %.0fKB, %.1fms total, %.1fms max", kUploadNames[kind],
                     static_cast<unsigned long long>(stats_.upload_count[kind]), stats_.upload_bytes[kind] / 1024.0,
                     stats_.upload_us[kind] / 1000.0, stats_.max_upload_us[kind] / 1000.0);
     for (int kind = 0; kind < ER_CANVAS_OP_COUNT; kind++)
       if (stats_.captures[kind])
-        std::printf("[PS5-REACT] gpu:   capture %s: %.1f per replay, %.0f kpx each (bounds, before clipping)\n",
+        log_line("[PS5-REACT] gpu:   capture %s: %.1f per replay, %.0f kpx each (bounds, before clipping)",
                     kKindNames[kind], stats_.captures[kind] / n,
                     stats_.capture_px[kind] / 1000.0 / static_cast<double>(stats_.captures[kind]));
     stats_ = {};
@@ -739,6 +831,7 @@ void GpuRenderer::replay() {
   glBlendFunc(GL_ONE, GL_ZERO);
   glUseProgram(0);
   glBindVertexArray(0);
+  return drew;
 }
 
 void GpuRenderer::draw_ops() {
@@ -750,76 +843,126 @@ void GpuRenderer::draw_ops() {
 
   glBindVertexArray(vao_);
   glEnable(GL_BLEND);
-  glActiveTexture(GL_TEXTURE0);
   glDisable(GL_SCISSOR_TEST);
-  // GL state as last set here: a draw sets only what changed.
-  GLuint used = 0, bound = 0;
-  int blend_set = -1;
-  bool scissoring = false;
-  int scissor[4] = {};
-  auto scissor_off = [&]() {
-    if (!scissoring) return;
-    glDisable(GL_SCISSOR_TEST);
-    scissoring = false;
-  };
-  auto scissor_to = [&](int x, int y, int w, int h) {
-    if (!scissoring) glEnable(GL_SCISSOR_TEST);
-    if (!scissoring || x != scissor[0] || y != scissor[1] || w != scissor[2] || h != scissor[3]) {
-      glScissor(x, y, w, h);
-      scissor[0] = x, scissor[1] = y, scissor[2] = w, scissor[3] = h;
-    }
-    scissoring = true;
-  };
-  auto bind_texture = [&](GLuint texture) {
-    if (texture == bound) return;
-    glBindTexture(GL_TEXTURE_2D, texture);
-    bound = texture;
-  };
+  glUseProgram(program_);
+  constexpr const char* kTextureNames[kUnits] = {"u_tex0", "u_tex1", "u_tex2", "u_tex3",
+                                                 "u_tex4", "u_tex5", "u_tex6", "u_tex7"};
+  for (int unit = 0; unit < kUnits; unit++) set_i(program_, kTextureNames[unit], unit);
+  set_i(program_, "u_records", kUnits);
+  glActiveTexture(GL_TEXTURE0 + kUnits);
+  glBindTexture(GL_TEXTURE_BUFFER, records_texture_);
+  glActiveTexture(GL_TEXTURE0);
+  glBindBuffer(GL_TEXTURE_BUFFER, records_buffer_);
 
+  // The batch: the draws since the last flush, their records and rounded clips, and the textures they read.
+  // A blend change, a target change, a clear or a copy ends it; so does a ninth texture.
+  std::vector<float>& staged = staged_;
+  std::vector<float>& clip_sets = clip_sets_;
+  staged.clear();
+  clip_sets.clear();
+  GLuint units[kUnits] = {};
+  int unit_count = 0, draws = 0, batch_blend = 0, blend_set = -1;
+  int clip_set = -1;
+  bool clip_set_current = false;
   auto bind = [&]() {
     const Bound& b = targets.back();
     glBindFramebuffer(GL_FRAMEBUFFER, b.target->fbo);
     glViewport(0, 0, b.target->width, b.target->height);
   };
-  // Scissor = the innermost clip rect, in the bound target's pixels; the rounded clips go to the shader.
-  auto apply_clip = [&](GLuint program) {
-    const Bound& b = targets.back();
-    if (clips.empty()) {
-      scissor_off();
-    } else {
-      const Clip& top = clips.back();
-      scissor_to(top.x - b.ox, top.y - b.oy, std::max(top.w, 0), std::max(top.h, 0));
+  auto flush = [&]() {
+    if (!draws) return;
+    const int record_texels = draws * kRecord;
+    const int texels = record_texels + static_cast<int>(clip_sets.size() / 4);
+    // A full buffer is orphaned: the driver gives fresh storage while the GPU reads the old.
+    if (buffer_at_ + texels > buffer_texels_) {
+      glBufferData(GL_TEXTURE_BUFFER, static_cast<GLsizeiptr>(buffer_texels_) * 16, nullptr, GL_STREAM_DRAW);
+      buffer_at_ = 0;
     }
-    float rects[16] = {}, radii[16] = {};
+    staged.insert(staged.end(), clip_sets.begin(), clip_sets.end());
+    glBufferSubData(GL_TEXTURE_BUFFER, static_cast<GLintptr>(buffer_at_) * 16,
+                    static_cast<GLsizeiptr>(staged.size() * sizeof(float)), staged.data());
+    const Bound& b = targets.back();
+    set_f(program_, "u_size", {static_cast<float>(b.target->width), static_cast<float>(b.target->height)});
+    set_f(program_, "u_origin", {static_cast<float>(b.ox), static_cast<float>(b.oy)});
+    set_i(program_, "u_first", buffer_at_);
+    set_i(program_, "u_clip_first", buffer_at_ + record_texels);
+    for (int unit = unit_count - 1; unit >= 0; unit--) {
+      glActiveTexture(GL_TEXTURE0 + unit);
+      glBindTexture(GL_TEXTURE_2D, units[unit]);
+    }
+    if (batch_blend != blend_set)
+      glBlendFunc(GL_ONE, batch_blend == ER_BLEND_ADD ? GL_ONE : GL_ONE_MINUS_SRC_ALPHA);
+    blend_set = batch_blend;
+    glDrawArraysInstanced(GL_TRIANGLE_STRIP, 0, 4, draws);
+    stats_.batches++;
+    buffer_at_ += texels;
+    staged.clear();
+    clip_sets.clear();
+    unit_count = draws = 0;
+    clip_set_current = false;
+  };
+  // The rounded clips in effect, innermost first, as the batch's clip set: written once per clip stack.
+  auto rounded_clips = [&]() -> int {
+    if (clip_set_current) return clip_set;
+    clip_set_current = true;
+    clip_set = -1;
     int count = 0;
-    for (auto it = clips.rbegin(); it != clips.rend() && count < 4; ++it) {
-      if (it->reset) break;
+    for (auto it = clips.rbegin(); it != clips.rend() && count < 4 && !it->reset; ++it) count += it->rounded;
+    if (!count) return clip_set;
+    clip_set = static_cast<int>(clip_sets.size() / 4);
+    clip_sets.insert(clip_sets.end(), {static_cast<float>(count), 0, 0, 0});
+    count = 0;
+    for (auto it = clips.rbegin(); it != clips.rend() && count < 4 && !it->reset; ++it) {
       if (!it->rounded) continue;
-      rects[count * 4] = static_cast<float>(it->bx);
-      rects[count * 4 + 1] = static_cast<float>(it->by);
-      rects[count * 4 + 2] = static_cast<float>(it->bw);
-      rects[count * 4 + 3] = static_cast<float>(it->bh);
-      std::copy(it->radii, it->radii + 4, radii + count * 4);
+      clip_sets.insert(clip_sets.end(), {static_cast<float>(it->bx), static_cast<float>(it->by),
+                                         static_cast<float>(it->bw), static_cast<float>(it->bh)});
+      clip_sets.insert(clip_sets.end(), it->radii, it->radii + 4);
       count++;
     }
-    set_i(program, "u_clips", count);
-    set_v4(program, "u_clip_rect", rects, 4);
-    set_v4(program, "u_clip_radii", radii, 4);
+    return clip_set;
   };
-  auto begin_draw = [&](GLuint program, int x, int y, int w, int h) {
-    const Bound& b = targets.back();
-    if (program != used) glUseProgram(program);
-    used = program;
-    set_f(program, "u_size", {static_cast<float>(b.target->width),
-                static_cast<float>(b.target->height)});
-    set_f(program, "u_origin", {static_cast<float>(b.ox), static_cast<float>(b.oy)});
-    set_f(program, "u_quad", {static_cast<float>(x), static_cast<float>(y),
-                static_cast<float>(w), static_cast<float>(h)});
-    set_f(program, "u_alpha", {alpha});
-    apply_clip(program);
+  // A draw's record, its quad cut to the clip rect as the scissor would; nullptr when nothing shows. The
+  // caller fills records 2 onward.
+  auto draw = [&](int kind, int x, int y, int w, int h, GLuint texture, float draw_alpha) -> float* {
+    if (!clips.empty()) {
+      const Clip& top = clips.back();
+      const int x1 = std::min(x + w, top.x + top.w), y1 = std::min(y + h, top.y + top.h);
+      x = std::max(x, top.x);
+      y = std::max(y, top.y);
+      w = x1 - x;
+      h = y1 - y;
+    }
+    if (w <= 0 || h <= 0) return nullptr;
     const int wanted = blend == ER_BLEND_ADD ? ER_BLEND_ADD : 0;
-    if (wanted != blend_set) glBlendFunc(GL_ONE, wanted == ER_BLEND_ADD ? GL_ONE : GL_ONE_MINUS_SRC_ALPHA);
-    blend_set = wanted;
+    if (draws && (wanted != batch_blend || draws == kBatchDraws)) flush();
+    batch_blend = wanted;
+    int unit = 0;
+    if (texture) {
+      while (unit < unit_count && units[unit] != texture) unit++;
+      if (unit == kUnits) {
+        flush();
+        unit = 0;
+      }
+      if (unit == unit_count) units[unit_count++] = texture;
+    }
+    const int clip = rounded_clips();
+    const std::size_t at = staged.size();
+    staged.resize(at + kRecord * 4, 0.0f);
+    float* r = staged.data() + at;
+    r[0] = static_cast<float>(x), r[1] = static_cast<float>(y), r[2] = static_cast<float>(w), r[3] = static_cast<float>(h);
+    r[4] = static_cast<float>(kind), r[5] = draw_alpha, r[6] = static_cast<float>(clip), r[7] = static_cast<float>(unit);
+    draws++;
+    stats_.draws++;
+    return r + 8;
+  };
+  auto put = [](float*& at, std::initializer_list<float> values) {
+    std::copy(values.begin(), values.end(), at);
+    at += 4;
+  };
+  auto put_color = [](float*& at, std::uint32_t argb) {
+    const auto p = premultiplied(argb);
+    std::copy(p.begin(), p.end(), at);
+    at += 4;
   };
   // Radii as the software rasterizer clamps them: no corner wider than half the shorter side.
   auto clamp_radii = [](const int in[4], int w, int h, float out[4]) {
@@ -829,47 +972,41 @@ void GpuRenderer::draw_ops() {
   auto shape = [&](const ERCanvasOp& op, int mode, std::uint32_t fill, const int edges[4],
                    const std::uint32_t colors[4]) {
     if (op.w <= 0 || op.h <= 0) return;
-    begin_draw(shape_, op.x, op.y, op.w, op.h);
+    float* r = draw(mode, op.x, op.y, op.w, op.h, 0, alpha);
+    if (!r) return;
     float radii[4];
     clamp_radii(op.radii, op.w, op.h, radii);
-    const auto f = premultiplied(fill);
-    set_f(shape_, "u_rect", {static_cast<float>(op.x), static_cast<float>(op.y),
-                static_cast<float>(op.w), static_cast<float>(op.h)});
-    set_v4(shape_, "u_radii", radii, 1);
-    set_i(shape_, "u_mode", mode);
-    set_v4(shape_, "u_fill", f.data(), 1);
-    if (mode != 0) {
-      const float e[4] = {static_cast<float>(edges[0]), static_cast<float>(edges[1]), static_cast<float>(edges[2]),
-                          static_cast<float>(edges[3])};
-      const float inner[4] = {std::max(radii[0] - std::max(e[0], e[1]), 0.0f),
-                              std::max(radii[1] - std::max(e[2], e[1]), 0.0f),
-                              std::max(radii[2] - std::max(e[2], e[3]), 0.0f),
-                              std::max(radii[3] - std::max(e[0], e[3]), 0.0f)};
-      float c[16];
-      for (int i = 0; i < 4; i++) {
-        const auto p = premultiplied(colors[i]);
-        std::copy(p.begin(), p.end(), c + i * 4);
-      }
-      set_v4(shape_, "u_edges", e, 1);
-      set_v4(shape_, "u_inner_radii", inner, 1);
-      set_v4(shape_, "u_edge_color", c, 4);
-    }
-    stats_.draws++;
-    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+    put(r, {static_cast<float>(op.x), static_cast<float>(op.y), static_cast<float>(op.w), static_cast<float>(op.h)});
+    put(r, {radii[0], radii[1], radii[2], radii[3]});
+    put_color(r, fill);
+    if (mode == 0) return;
+    const float e[4] = {static_cast<float>(edges[0]), static_cast<float>(edges[1]), static_cast<float>(edges[2]),
+                        static_cast<float>(edges[3])};
+    put(r, {e[0], e[1], e[2], e[3]});
+    put(r, {std::max(radii[0] - std::max(e[0], e[1]), 0.0f), std::max(radii[1] - std::max(e[2], e[1]), 0.0f),
+            std::max(radii[2] - std::max(e[2], e[3]), 0.0f), std::max(radii[3] - std::max(e[0], e[3]), 0.0f)});
+    for (int i = 0; i < 4; i++) put_color(r, colors[i]);
   };
+  // kind 10 shifts the texture by (shift_x, shift_y); 11 maps through the matrix m.
   auto texture_draw = [&](unsigned int texture, int kind, int x, int y, int w, int h, float shift_x, float shift_y,
                           int src_w, int src_h, const float* m, float op_alpha) {
     if (w <= 0 || h <= 0) return;
-    begin_draw(image_, x, y, w, h);
-    set_f(image_, "u_alpha", {alpha * op_alpha});
-    bind_texture(texture);
-    set_i(image_, "u_tex", 0);
-    set_i(image_, "u_kind", kind);
-    set_f(image_, "u_shift", {shift_x, shift_y});
-    set_f(image_, "u_src_size", {static_cast<float>(src_w), static_cast<float>(src_h)});
-    if (m) set_v1(image_, "u_m", m, 6);
-    stats_.draws++;
-    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+    float* r = draw(kind, x, y, w, h, texture, alpha * op_alpha);
+    if (!r) return;
+    put(r, {shift_x, shift_y, static_cast<float>(src_w), static_cast<float>(src_h)});
+    if (m) {
+      put(r, {m[0], m[1], m[2], m[3]});
+      put(r, {m[4], m[5], 0, 0});
+    }
+  };
+  auto clip_to_top = [&](Clip& c) {
+    if (clips.empty()) return;
+    const Clip& top = clips.back();
+    const int x1 = std::min(c.x + c.w, top.x + top.w), y1 = std::min(c.y + c.h, top.y + top.h);
+    c.x = std::max(c.x, top.x);
+    c.y = std::max(c.y, top.y);
+    c.w = std::max(x1 - c.x, 0);
+    c.h = std::max(y1 - c.y, 0);
   };
 
   bind();
@@ -906,55 +1043,41 @@ void GpuRenderer::draw_ops() {
         break;
       case ER_CANVAS_CLEAR: {
         // Transparent, through the clip rect only, as the software clear.
+        Clip c{op.x, op.y, op.w, op.h, false, {}, 0, 0, 0, 0, false};
+        clip_to_top(c);
+        if (c.w <= 0 || c.h <= 0) break;
+        flush();
         const Bound& b = targets.back();
-        int x = op.x, y = op.y, w = op.w, h = op.h;
-        if (!clips.empty()) {
-          const Clip& c = clips.back();
-          const int x1 = std::min(x + w, c.x + c.w), y1 = std::min(y + h, c.y + c.h);
-          x = std::max(x, c.x);
-          y = std::max(y, c.y);
-          w = x1 - x;
-          h = y1 - y;
-        }
-        if (w <= 0 || h <= 0) break;
-        scissor_to(x - b.ox, y - b.oy, w, h);
+        glEnable(GL_SCISSOR_TEST);
+        glScissor(c.x - b.ox, c.y - b.oy, c.w, c.h);
         glClearColor(0, 0, 0, 0);
         glClear(GL_COLOR_BUFFER_BIT);
+        glDisable(GL_SCISSOR_TEST);
         break;
       }
       case ER_CANVAS_CLIP_RECT: {
         Clip c{op.x, op.y, op.w, op.h, false, {}, 0, 0, 0, 0, false};
-        if (!clips.empty()) {
-          const Clip& top = clips.back();
-          const int x1 = std::min(op.x + op.w, top.x + top.w), y1 = std::min(op.y + op.h, top.y + top.h);
-          c.x = std::max(op.x, top.x);
-          c.y = std::max(op.y, top.y);
-          c.w = std::max(x1 - c.x, 0);
-          c.h = std::max(y1 - c.y, 0);
-        }
+        clip_to_top(c);
         clips.push_back(c);
+        clip_set_current = false;
         break;
       }
       case ER_CANVAS_CLIP_RRECT: {
         Clip c{op.x, op.y, op.w, op.h, true, {}, op.x, op.y, op.w, op.h, false};
-        if (!clips.empty()) {
-          const Clip& top = clips.back();
-          const int x1 = std::min(op.x + op.w, top.x + top.w), y1 = std::min(op.y + op.h, top.y + top.h);
-          c.x = std::max(op.x, top.x);
-          c.y = std::max(op.y, top.y);
-          c.w = std::max(x1 - c.x, 0);
-          c.h = std::max(y1 - c.y, 0);
-        }
+        clip_to_top(c);
         clamp_radii(op.radii, op.w, op.h, c.radii);
         c.rounded = c.radii[0] > 0 || c.radii[1] > 0 || c.radii[2] > 0 || c.radii[3] > 0;
         clips.push_back(c);
+        clip_set_current = false;
         break;
       }
       case ER_CANVAS_CLIP_RESET:
         clips.push_back(Clip{-(1 << 20), -(1 << 20), 1 << 21, 1 << 21, false, {}, 0, 0, 0, 0, true});
+        clip_set_current = false;
         break;
       case ER_CANVAS_CLIP_POP:
         if (!clips.empty()) clips.pop_back();
+        clip_set_current = false;
         break;
       case ER_CANVAS_ALPHA:
         alpha = static_cast<float>(op.alpha) / 255.0f;
@@ -963,18 +1086,18 @@ void GpuRenderer::draw_ops() {
         blend = op.mode;
         break;
       case ER_CANVAS_GROUP_BEGIN: {
+        flush();
         Group& g = group(op.buffer, op.w, op.h);
         g.ox = op.x;
         g.oy = op.y;
-        bound = 0; // a new or resized target binds its texture
         targets.push_back({&g.target, op.x, op.y});
         bind();
-        scissor_off();
         glClearColor(0, 0, 0, 0);
         glClear(GL_COLOR_BUFFER_BIT);
         break;
       }
       case ER_CANVAS_GROUP_END:
+        flush();
         if (targets.size() > 1) targets.pop_back();
         bind();
         break;
@@ -982,7 +1105,7 @@ void GpuRenderer::draw_ops() {
         for (const auto& [key, g] : groups_) {
           if (key != op.buffer) continue;
           // Screen pixel (x, y) reads the group's pixel pos[]: the shift between them.
-          texture_draw(g.target.texture, 0, op.x, op.y, op.w, op.h, static_cast<float>(op.x - op.pos[0]),
+          texture_draw(g.target.texture, 10, op.x, op.y, op.w, op.h, static_cast<float>(op.x - op.pos[0]),
                        static_cast<float>(op.y - op.pos[1]), g.target.width, g.target.height, nullptr,
                        static_cast<float>(op.alpha) / 255.0f);
           break;
@@ -993,7 +1116,7 @@ void GpuRenderer::draw_ops() {
         for (const auto& [key, g] : groups_) {
           if (key != op.buffer) continue;
           // m holds ia ib ic id itx ity; the source's pixel (0, 0) is the capture's (pos[0], pos[1]).
-          texture_draw(g.target.texture, 1, op.x, op.y, op.w, op.h, static_cast<float>(op.pos[0]),
+          texture_draw(g.target.texture, 11, op.x, op.y, op.w, op.h, static_cast<float>(op.pos[0]),
                        static_cast<float>(op.pos[1]), op.slot, op.width, op.m, 1.0f);
           break;
         }
@@ -1002,26 +1125,21 @@ void GpuRenderer::draw_ops() {
       case ER_CANVAS_GRADIENT: {
         if (op.stop_count < 2 || op.w <= 0 || op.h <= 0) break;
         if (op.mode != ER_GRADIENT_LINEAR && op.mode != ER_GRADIENT_RADIAL) break;
-        begin_draw(shape_, op.x, op.y, op.w, op.h);
+        float* r = draw(op.mode == ER_GRADIENT_LINEAR ? 3 : 4, op.x, op.y, op.w, op.h, 0, alpha);
+        if (!r) break;
         float radii[4];
         clamp_radii(op.radii, op.w, op.h, radii);
-        set_f(shape_, "u_rect", {static_cast<float>(op.x), static_cast<float>(op.y),
-                    static_cast<float>(op.w), static_cast<float>(op.h)});
-        set_v4(shape_, "u_radii", radii, 1);
-        set_i(shape_, "u_mode", op.mode == ER_GRADIENT_LINEAR ? 3 : 4);
+        put(r, {static_cast<float>(op.x), static_cast<float>(op.y), static_cast<float>(op.w), static_cast<float>(op.h)});
+        put(r, {radii[0], radii[1], radii[2], radii[3]});
         const int count = std::min(op.stop_count, 4);
-        float colors[16] = {}, positions[4] = {};
-        for (int i = 0; i < count; i++) {
-          const std::uint32_t c = op.stops[i].color;
-          colors[i * 4] = static_cast<float>(c >> 24);
-          colors[i * 4 + 1] = static_cast<float>((c >> 16) & 0xFF);
-          colors[i * 4 + 2] = static_cast<float>((c >> 8) & 0xFF);
-          colors[i * 4 + 3] = static_cast<float>(c & 0xFF);
-          positions[i] = op.stops[i].position;
+        float positions[4] = {};
+        for (int i = 0; i < 4; i++) {
+          const std::uint32_t c = i < count ? op.stops[i].color : 0;
+          put(r, {static_cast<float>(c >> 24), static_cast<float>((c >> 16) & 0xFF), static_cast<float>((c >> 8) & 0xFF),
+                  static_cast<float>(c & 0xFF)});
+          if (i < count) positions[i] = op.stops[i].position;
         }
-        set_v4(shape_, "u_stop_color", colors, 4);
-        set_v1(shape_, "u_stop_pos", positions, 4);
-        set_i(shape_, "u_stop_count", count);
+        put(r, {positions[0], positions[1], positions[2], positions[3]});
         // The table's size and the index scale, as the software ramp works them out.
         float extent, to_idx, min_p = 0.0f;
         int step = 0;
@@ -1037,59 +1155,43 @@ void GpuRenderer::draw_ops() {
         const int n = std::clamp(static_cast<int>(extent) + 1, 2, 1024);
         to_idx = extent > 1e-6f ? static_cast<float>(n - 1) / extent : 0.0f;
         if (op.mode == ER_GRADIENT_LINEAR) step = static_cast<int>(std::lrint(op.f[0] * to_idx * 65536.0f));
-        set_f(shape_, "u_dir", {op.f[0], op.f[1]});
-        set_f(shape_, "u_min_p", {min_p});
-        set_f(shape_, "u_to_idx", {to_idx});
-        set_i(shape_, "u_step", step);
-        set_i(shape_, "u_lut_n", n);
-        stats_.draws++;
-        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+        float step_bits;
+        std::memcpy(&step_bits, &step, sizeof step_bits);
+        put(r, {static_cast<float>(count), op.f[0], op.f[1], min_p});
+        put(r, {to_idx, step_bits, static_cast<float>(n), 0});
         break;
       }
       case ER_CANVAS_IMAGE_REGION: {
-        const std::uint64_t uploads = stats_.uploads;
         const Image& img = image(op.buffer, op.name, op.slot, op.width, op.mode);
-        if (stats_.uploads != uploads) bound = img.texture;
-        begin_draw(image_, op.x, op.y, op.w, op.h);
-        bind_texture(img.texture);
-        set_i(image_, "u_tex", 0);
-        set_i(image_, "u_kind", 3);
-        set_f(image_, "u_dst", {static_cast<float>(op.x), static_cast<float>(op.y),
-                    static_cast<float>(op.w), static_cast<float>(op.h)});
-        set_f(image_, "u_src", {static_cast<float>(op.src[0]), static_cast<float>(op.src[1]),
-                    static_cast<float>(op.src[2]), static_cast<float>(op.src[3])});
-        set_f(image_, "u_tint", {static_cast<float>((op.argb >> 16) & 0xFF),
-                    static_cast<float>((op.argb >> 8) & 0xFF), static_cast<float>(op.argb & 0xFF), op.f[0]});
+        float* r = draw(13, op.x, op.y, op.w, op.h, img.texture, alpha);
+        if (!r) break;
+        put(r, {0, 0, static_cast<float>(img.width), static_cast<float>(img.height)});
+        put(r, {static_cast<float>(op.x), static_cast<float>(op.y), static_cast<float>(op.w), static_cast<float>(op.h)});
+        put(r, {static_cast<float>(op.src[0]), static_cast<float>(op.src[1]), static_cast<float>(op.src[2]),
+                static_cast<float>(op.src[3])});
+        put(r, {static_cast<float>((op.argb >> 16) & 0xFF), static_cast<float>((op.argb >> 8) & 0xFF),
+                static_cast<float>(op.argb & 0xFF), op.f[0]});
+        put(r, {static_cast<float>(op.area[0]), static_cast<float>(op.area[1]), static_cast<float>(op.area[2]),
+                static_cast<float>(op.area[3])});
         float radii[4];
         clamp_radii(op.radii, op.area[2], op.area[3], radii);
-        set_f(image_, "u_mask", {static_cast<float>(op.area[0]),
-                    static_cast<float>(op.area[1]), static_cast<float>(op.area[2]), static_cast<float>(op.area[3])});
-        set_v4(image_, "u_mask_radii", radii, 1);
-        stats_.draws++;
-        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+        put(r, {radii[0], radii[1], radii[2], radii[3]});
         break;
       }
       case ER_CANVAS_GLYPH: {
-        const std::uint64_t uploads = stats_.uploads;
         const Glyph& g = glyph(op.buffer, op.w, op.h, op.mode);
-        if (stats_.uploads != uploads) bound = g.texture;
         // The glyph's box (wider by the italic shear), cut to the text's clip.
         const int reach = op.f[0] != 0.0f ? static_cast<int>(static_cast<float>(op.h - 1) * 0.2f) + 2 : 0;
-        int x = std::max(op.x, op.area[0]), y = std::max(op.y, op.area[1]);
+        const int x = std::max(op.x, op.area[0]), y = std::max(op.y, op.area[1]);
         const int x1 = std::min(op.x + op.w + reach, op.area[0] + op.area[2]);
         const int y1 = std::min(op.y + op.h, op.area[1] + op.area[3]);
         if (x1 <= x || y1 <= y) break;
-        begin_draw(image_, x, y, x1 - x, y1 - y);
-        bind_texture(g.texture);
-        set_i(image_, "u_tex", 0);
-        set_i(image_, "u_kind", 2);
-        set_f(image_, "u_shift", {static_cast<float>(op.x), static_cast<float>(op.y)});
-        set_f(image_, "u_src_size", {static_cast<float>(g.width), static_cast<float>(g.height)});
-        set_i(image_, "u_italic", op.f[0] == 0.0f ? 0 : op.mode == 1 ? 1 : 2);
-        const auto c = premultiplied(op.argb);
-        set_v4(image_, "u_color", c.data(), 1);
-        stats_.draws++;
-        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+        float* r = draw(12, x, y, x1 - x, y1 - y, g.texture, alpha);
+        if (!r) break;
+        put(r, {static_cast<float>(op.x), static_cast<float>(op.y), static_cast<float>(g.width),
+                static_cast<float>(g.height)});
+        put_color(r, op.argb);
+        put(r, {op.f[0] == 0.0f ? 0.0f : op.mode == 1 ? 1.0f : 2.0f, 0, 0, 0});
         break;
       }
       case ER_CANVAS_GROUP_KEEP: {
@@ -1097,10 +1199,9 @@ void GpuRenderer::draw_ops() {
         for (const auto& [key, g] : groups_)
           if (key == op.source) from = &g;
         if (!from || op.w <= 0 || op.h <= 0) break;
+        flush();
         const Target source = from->target;
         Group& kept = group(op.buffer, source.width, source.height);
-        bound = 0;
-        scissor_off();
         glBindFramebuffer(GL_READ_FRAMEBUFFER, source.fbo);
         glBindFramebuffer(GL_DRAW_FRAMEBUFFER, kept.target.fbo);
         glBlitFramebuffer(0, 0, op.w, op.h, 0, 0, op.w, op.h, GL_COLOR_BUFFER_BIT, GL_NEAREST);
@@ -1110,21 +1211,16 @@ void GpuRenderer::draw_ops() {
       case ER_CANVAS_BORDER_SWEEP: {
         // As border_sweep_render_sw sets up the ring and its centre line.
         if (op.w <= 0 || op.h <= 0 || op.width <= 0 || (op.argb >> 24) == 0 || op.f[1] <= 0.0f) break;
-        const int r = std::clamp(op.radii[0], 0, std::min(op.w, op.h) / 2);
+        const int radius = std::clamp(op.radii[0], 0, std::min(op.w, op.h) / 2);
         const float bw = static_cast<float>(op.width), mid = bw * 0.5f;
-        const float cr = std::max(static_cast<float>(r) - mid, 0.0f);
-        begin_draw(shape_, op.x, op.y, op.w, op.h);
-        const auto f = premultiplied(op.argb);
-        set_f(shape_, "u_rect", {static_cast<float>(op.x), static_cast<float>(op.y),
-                    static_cast<float>(op.w), static_cast<float>(op.h)});
-        set_i(shape_, "u_mode", 5);
-        set_v4(shape_, "u_fill", f.data(), 1);
-        set_f(shape_, "u_ring", {static_cast<float>(r), bw, std::max(static_cast<float>(r) - bw, 0.0f)});
-        set_f(shape_, "u_line", {static_cast<float>(op.w) * 0.5f - mid - cr,
-                    static_cast<float>(op.h) * 0.5f - mid - cr, cr});
-        set_f(shape_, "u_sweep", {op.f[0], op.f[1]});
-        stats_.draws++;
-        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+        const float cr = std::max(static_cast<float>(radius) - mid, 0.0f);
+        float* r = draw(5, op.x, op.y, op.w, op.h, 0, alpha);
+        if (!r) break;
+        put(r, {static_cast<float>(op.x), static_cast<float>(op.y), static_cast<float>(op.w), static_cast<float>(op.h)});
+        put_color(r, op.argb);
+        put(r, {static_cast<float>(radius), bw, std::max(static_cast<float>(radius) - bw, 0.0f), 0});
+        put(r, {static_cast<float>(op.w) * 0.5f - mid - cr, static_cast<float>(op.h) * 0.5f - mid - cr, cr, 0});
+        put(r, {op.f[0], op.f[1], 0, 0});
         break;
       }
       case ER_CANVAS_PIXELS: {
@@ -1135,7 +1231,7 @@ void GpuRenderer::draw_ops() {
           // Recorded without a copy only when kept, and kept ones stay until they are replayed.
           if (recorded.pixels.empty()) break;
           if (found != pixels_.end()) {
-            if (bound == found->second.texture) bound = 0;
+            flush();  // a queued draw may read the texture going
             glDeleteTextures(1, &found->second.texture);
             pixels_bytes_ -= static_cast<std::size_t>(found->second.width) * found->second.height * 4;
             pixels_.erase(found);
@@ -1145,7 +1241,7 @@ void GpuRenderer::draw_ops() {
           const auto upload_began = std::chrono::steady_clock::now();
           Pixels made{0, op.w, op.h, replay_serial_};
           glGenTextures(1, &made.texture);
-          bind_texture(made.texture);
+          glBindTexture(GL_TEXTURE_2D, made.texture);
           glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
           glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
           gl::tex_image_argb(op.w, op.h, recorded.pixels.data());
@@ -1154,13 +1250,13 @@ void GpuRenderer::draw_ops() {
           found = pixels_.emplace(recorded.hash, made).first;
         }
         found->second.used = std::max(found->second.used, replay_serial_);
-        texture_draw(found->second.texture, 0, op.x, op.y, op.w, op.h, static_cast<float>(op.x),
+        texture_draw(found->second.texture, 10, op.x, op.y, op.w, op.h, static_cast<float>(op.x),
                      static_cast<float>(op.y), op.w, op.h, nullptr, 1.0f);
         break;
       }
       case ER_CANVAS_MOVE: {
         // Through the copy target: a framebuffer cannot blit onto itself.
-        scissor_off();
+        flush();
         glBindFramebuffer(GL_READ_FRAMEBUFFER, target_.fbo);
         glBindFramebuffer(GL_DRAW_FRAMEBUFFER, copy_.fbo);
         glBlitFramebuffer(op.x, op.y, op.x + op.w, op.y + op.h, op.x, op.y, op.x + op.w, op.y + op.h,
@@ -1176,6 +1272,9 @@ void GpuRenderer::draw_ops() {
         break;
     }
   }
+  flush();
+  glActiveTexture(GL_TEXTURE0);
+  glBindBuffer(GL_TEXTURE_BUFFER, 0);
 }
 
 namespace {
