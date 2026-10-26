@@ -15,6 +15,7 @@
 #endif
 
 #include <algorithm>
+#include <atomic>
 #include <cerrno>
 #include <cmath>
 #include <cstdio>
@@ -39,6 +40,13 @@ std::string names() {
   for (const char* name : model_names) out += (out.empty() ? "" : ", ") + std::string(name);
   return out;
 }
+
+namespace {
+std::atomic<bool> runnable{false};
+} // namespace
+
+bool available() { return runnable; }
+void set_available(bool available) { runnable = available; }
 } // namespace upscalers
 
 // Without compute shaders (macOS's GL 4.1) there is nothing to run: init() fails.

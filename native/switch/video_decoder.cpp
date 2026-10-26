@@ -172,6 +172,14 @@ private:
       }
       copy->data[plane] = static_cast<std::uint8_t*>(planes->data[plane]);
       copy->linesize[plane] = pitch;
+      // nvtegra checks the planes' alignment through their buffers and copies on the CPU without them;
+      // these only borrow the pool's memory, which `planes` gives back.
+      copy->buf[plane] = av_buffer_create(copy->data[plane], planes->bytes[plane], [](void*, std::uint8_t*) {},
+                                          nullptr, 0);
+      if (!copy->buf[plane]) {
+        av_frame_free(&copy);
+        return false;
+      }
     }
     const int copied = av_hwframe_transfer_data(copy, frame_, 0);
     av_frame_free(&copy);

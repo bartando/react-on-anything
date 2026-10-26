@@ -283,6 +283,7 @@ bool GlVideo::init(bool storage_allowed) {
   (void)storage_allowed;
 #endif
   mode_ = storage_program_ ? Upload::storage : Upload::textures;
+  upscalers::set_available(mode_ == Upload::storage);
   upscalers_.resize(std::size_t(upscalers::count()));
   upscaler_tried_.assign(std::size_t(upscalers::count()), false);
   glGenVertexArrays(1, &vao_);

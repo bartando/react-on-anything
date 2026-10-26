@@ -55,6 +55,10 @@ anything else decodes in software, up to 1080p.
 ## Platform notes
 
 - devkitA64's newlib lacks `pread`/`pwrite`, `sysconf` and `getrusage`: `native/switch/libc_shims.cpp`.
+- libnx has no `pthread_detach` (ENOSYS), so `std::thread::detach()` throws there: shared code joins its
+  threads instead (`native/shared/video_api.cpp` releases players on threads that it joins later). An
+  uncaught exception returns the NRO to hbloader with its other threads still running, which then
+  crash on the unmapped code, and the crash report blames them.
 - The system's socket service drops broadcasts to 255.255.255.255; LAN discovery sends to the subnet's
   broadcast address there (`native/shared/lan.cpp`).
 - devkitPro's curl (7.69) predates `CURLOPT_PROTOCOLS_STR`; its TLS is the system's ssl service.

@@ -688,6 +688,9 @@ function pollVideos() {
  *   audio?: boolean, headers?: Record<string, string>, audioOutput?: 'pcm' | 'auto' | 'passthrough'}} options
  * @param {(status: object) => void} listener
  */
+/** Whether this host's video presenter runs the upscaling networks (the PS5's GPU does; GLES hosts do not). */
+export const canUpscaleVideo = () => host().video.canUpscale?.() === true;
+
 export function openVideo(source, options, listener) {
   const video = host().video;
   const {id, name} = video.open(source, options);
