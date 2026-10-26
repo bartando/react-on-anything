@@ -4,7 +4,7 @@
 """Nintendo Switch host (native/switch): builds a homebrew NRO with the app's bundle and fonts in its
 RomFS, and with --send pushes it to the Homebrew Menu's netloader and prints the app's output.
 
-    python3 tools/switch.py --app-dir ../anyfin --send 192.168.0.142
+    python3 tools/switch.py --app-dir ../my-app --send <switch-address>
 
 The app is laid out twice, at 1920x1080 and 1280x720, whatever its app.json says: the host picks the
 screen's own resolution at launch, 720p handheld and 1080p docked. Needs

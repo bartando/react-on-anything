@@ -49,7 +49,6 @@ const distDir = resolve(process.argv[4]);
 // Added by React on Anything: Tailwind classes compile for this render size.
 const render = {width: Number(process.argv[5]), height: Number(process.argv[6])};
 
-const DEFAULT_DEMO = 'thermostat';
 const demoDir = resolve(process.argv[3]);
 const demo = basename(demoDir);
 const entry = resolve(demoDir, 'index.jsx');

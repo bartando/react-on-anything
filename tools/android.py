@@ -4,7 +4,7 @@
 """Android TV host (native/android): builds an APK for 32-bit ARM, and with --device installs it, pushes
 the app's bundle and fonts, and starts it.
 
-    python3 tools/android.py --app-dir ../anyfin --device 192.168.0.165:5555
+    python3 tools/android.py --app-dir ../my-app --device <tv-address>:5555
 
 The app is laid out at 1920x1080 whatever its app.json says: Android TV apps draw at 1080p and the
 system scales them to the TV. Needs the Android SDK (ANDROID_HOME, default ~/Library/Android/sdk) with an
