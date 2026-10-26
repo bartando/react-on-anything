@@ -77,15 +77,24 @@ def network_libraries(ndk):
     return prefix
 
 
-def banner(app, path):
-    """The launcher's 320x180 banner: the app's icon centred on black."""
-    from PIL import Image
+def launcher_art(app, res):
+    """The launcher's art: a 16:9 banner (the app's android/banner.png, else its PS5 background pic0.png,
+    else its icon on black) and the square icon, at xhdpi, which a 1080p TV launcher draws them at:
+    the banner at 640x360, laid out at 320x180."""
+    from PIL import Image, ImageOps
+    shutil.rmtree(res, ignore_errors=True)
+    (res / "drawable-xhdpi").mkdir(parents=True)
     icon = Image.open(app / "sce_sys/icon0.png").convert("RGBA")
-    icon.thumbnail((180, 180))
-    image = Image.new("RGBA", (320, 180), (0, 0, 0, 255))
-    image.alpha_composite(icon, ((320 - icon.width) // 2, (180 - icon.height) // 2))
-    path.parent.mkdir(parents=True, exist_ok=True)
-    image.save(path)
+    art = next((path for path in (app / "android/banner.png", app / "sce_sys/pic0.png") if path.exists()), None)
+    if art:
+        banner = ImageOps.fit(Image.open(art).convert("RGBA"), (640, 360), Image.LANCZOS)
+    else:
+        banner = Image.new("RGBA", (640, 360), (0, 0, 0, 255))
+        small = icon.copy()
+        small.thumbnail((360, 360))
+        banner.alpha_composite(small, ((640 - small.width) // 2, (360 - small.height) // 2))
+    banner.save(res / "drawable-xhdpi/banner.png")
+    icon.resize((96, 96), Image.LANCZOS).save(res / "drawable-xhdpi/icon.png")
 
 
 def package_name(config):
@@ -118,7 +127,7 @@ def build(app):
     manifest = output / "AndroidManifest.xml"
     manifest.write_text((ROOT / "native/android/AndroidManifest.xml").read_text()
                         .replace("@PACKAGE@", package).replace("@LABEL@", config["name"]))
-    banner(app, output / "res/drawable/banner.png")
+    launcher_art(app, output / "res")
     run([tools / "aapt2", "compile", "-o", output / "res.zip", "--dir", output / "res"], log=output / "aapt2.log")
     unsigned = output / "unsigned.apk"
     run([tools / "aapt2", "link", "-o", unsigned, "--manifest", manifest, "-I",
@@ -142,7 +151,8 @@ def newest_platform():
 
 def deploy(device, apk, package, layout, generated, options):
     adb = [sdk() / "platform-tools/adb", "-s", device]
-    run([*adb, "install", "-r", apk])
+    # -d: a build from a checkout with an older version code still replaces what is installed.
+    run([*adb, "install", "-r", "-d", apk])
     files = f"/sdcard/Android/data/{package}/files"
     run([*adb, "shell", "mkdir", "-p", f"{files}/fonts"])
     run([*adb, "push", layout / "app.bundle.js", f"{files}/app.bundle.js"])

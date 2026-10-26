@@ -14,6 +14,11 @@ bundle to the app's external files directory and starts it. The first build comp
 for the ABI into `.deps/android`. The app is laid out at 1920x1080 whatever its `app.json` says: Android
 TV apps draw at 1080p and the system scales them to the TV.
 
+The launcher shows a 16:9 banner: the app's `android/banner.png`, else its PS5 background
+`sce_sys/pic0.png`, else its icon on black, fitted to 640x360. The square icon (`sce_sys/icon0.png`)
+is the app's icon in the system's app lists. Launchers that keep their own copy of an app's art
+(Projectivy does) may need the app taken off their home row and put back to show a new one.
+
 On the device, under `/sdcard/Android/data/<package>/files`:
 
 | Path | |

@@ -9,7 +9,7 @@
   <uses-feature android:name="android.software.leanback" android:required="false" />
   <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
   <application android:label="@LABEL@" android:hasCode="false" android:debuggable="true"
-      android:usesCleartextTraffic="true" android:banner="@drawable/banner" android:icon="@drawable/banner">
+      android:usesCleartextTraffic="true" android:banner="@drawable/banner" android:icon="@drawable/icon">
     <activity android:name="android.app.NativeActivity" android:exported="true"
         android:screenOrientation="landscape" android:configChanges="orientation|screenSize|screenLayout|keyboard|keyboardHidden|navigation|uiMode|density"
         android:theme="@android:style/Theme.NoTitleBar.Fullscreen">
