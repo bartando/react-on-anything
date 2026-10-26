@@ -28,7 +28,7 @@ target_include_directories(android_native_app_glue PUBLIC "${ANDROID_NDK}/source
 
 set(SHARED ../shared)
 add_library(main SHARED ${ROA_CORE_SOURCES} host.cpp host_platform.cpp network_platform.cpp java.cpp media_codec.cpp gl_video.cpp image_decoder.cpp
-  ${SHARED}/archives_unsupported.cpp ${SHARED}/packages_unsupported.cpp ${SHARED}/browser_capture_unsupported.cpp ${SHARED}/host_posix.cpp
+  ${SHARED}/archives_unsupported.cpp ${SHARED}/packages_unsupported.cpp ${SHARED}/browser_capture_unsupported.cpp ${SHARED}/host_posix.cpp ${SHARED}/host_defaults.cpp
   ${SHARED}/video_player.cpp ${SHARED}/video_subtitles.cpp ${SHARED}/annex_b.cpp "${HUI_ROOT}/src/audio/mixer.cpp"
   "${APP_LAYOUT}/assets.generated.c" "${APP_LAYOUT}/sounds.generated.c")
 target_compile_features(main PRIVATE cxx_std_20)

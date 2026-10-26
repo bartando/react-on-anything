@@ -54,17 +54,6 @@ const char* platform_name() {
   return "switch";
 }
 
-bool arrange_relaunch(char* error, std::size_t size) {
-  std::snprintf(error, size, "Relaunching is not supported on the Switch.");
-  return false;
-}
-
-int list_mounts(MountEntry*, int) {
-  return 0;
-}
-
-void trace(const char*) {}
-
 bool resolve_path(const char* path, char* out, std::size_t size) {
   return resolve_under(root.c_str(), path, out, size);
 }
@@ -104,30 +93,6 @@ void device_info(DeviceInfo& info) {
   }
 }
 
-bool foreground_user(User& user) {
-  user.id = 1;
-  std::snprintf(user.name, sizeof user.name, "player");
-  return true;
-}
-
-int logged_in_users(User* users, int max) {
-  return max > 0 && foreground_user(users[0]) ? 1 : 0;
-}
-
-bool notify(const char* message, const char* sub_message) {
-  std::printf("[notify] %s%s%s\n", message, *sub_message ? ": " : "", sub_message);
-  return true;
-}
-
-bool open_url(const char*) {
-  return false;
-}
-
-void set_light_bar(std::uint8_t, std::uint8_t, std::uint8_t) {}
-void reset_light_bar() {}
-void vibrate(float, float) {}
-void set_trigger_effect(unsigned, int, const std::uint8_t*, std::size_t) {}
-
 // Media playback state keeps the console from dimming and sleeping while it is set.
 void keep_awake(bool enabled) {
   appletSetMediaPlaybackState(enabled);
@@ -164,9 +129,4 @@ void stop_audio() {
   audoutExit();
   for (AudioBuffer& buffer : audio_buffers) std::free(buffer.memory);
 }
-
-bool has_bitstream() { return false; }
-bool open_bitstream(iec61937::Codec, BitstreamFill) { return false; }
-void close_bitstream() {}
-bool sink_edid(std::vector<std::uint8_t>&) { return false; }
 } // namespace host

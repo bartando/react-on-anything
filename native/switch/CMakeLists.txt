@@ -23,7 +23,7 @@ include("${CMAKE_CURRENT_SOURCE_DIR}/../shared/core_sources.cmake")
 
 set(SHARED ../shared)
 add_executable(main ${ROA_CORE_SOURCES} host.cpp host_platform.cpp network_platform.cpp libc_shims.cpp video_decoder.cpp
-  ${SHARED}/archives_unsupported.cpp ${SHARED}/packages_unsupported.cpp ${SHARED}/browser_capture_unsupported.cpp ${SHARED}/host_posix.cpp
+  ${SHARED}/archives_unsupported.cpp ${SHARED}/packages_unsupported.cpp ${SHARED}/browser_capture_unsupported.cpp ${SHARED}/host_posix.cpp ${SHARED}/host_defaults.cpp
   ${SHARED}/video_player.cpp ${SHARED}/video_subtitles.cpp ${SHARED}/gl_video.cpp ${SHARED}/gl_upscale.cpp
   "${HUI_ROOT}/src/audio/mixer.cpp"
   "${APP_GENERATED}/1920x1080/sounds.generated.c")

@@ -97,23 +97,12 @@ constexpr std::uint64_t kQuitHoldMs = 1000;
 
 void log_line(const char* line) { std::printf("%s\n", line); }
 
-HostCore::Config core_config() {
-  HostCore::Config config;
-  config.width = width;
-  config.height = height;
-  config.clock_us = now_us;
-  config.log = log_line;
-  config.option = HostCore::env_option;
-  config.gpu_by_default = true;
-  return config;
-}
-
 struct Host {
   EGLDisplay display = EGL_NO_DISPLAY;
   EGLContext context = EGL_NO_CONTEXT;
   EGLSurface surface = EGL_NO_SURFACE;
   GlPresenter presenter;
-  HostCore core{core_config()};
+  HostCore core{HostCore::environment(width, height, now_us, log_line, /*gpu_by_default=*/true)};
   PadState pad_state{};
   struct Boosted {
     ClkrstSession session{};

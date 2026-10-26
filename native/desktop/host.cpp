@@ -132,22 +132,12 @@ GamepadState read_gamepad(SDL_GameController* controller) {
   return state;
 }
 
-HostCore::Config core_config() {
-  HostCore::Config config;
-  config.width = width;
-  config.height = height;
-  config.clock_us = now_us;
-  config.log = log_line;
-  config.option = HostCore::env_option;
-  return config;
-}
-
 struct Host {
   SDL_Window* window = nullptr;
   SDL_GLContext context = nullptr;
   SDL_GameController* controller = nullptr;
   GlPresenter presenter;
-  HostCore core{core_config()};
+  HostCore core{HostCore::environment(width, height, now_us, log_line, /*gpu_by_default=*/false)};
   bool running = true;
   // The interactive loop leaves a frame that changed nothing unpresented, as the PS5 host does; the
   // self-tests read back every frame. exposed forces the next frame out after the window reappears.

@@ -131,17 +131,6 @@ float stick(const AInputEvent* event, int32_t axis) {
 
 void log_line(const char* line) { std::printf("%s\n", line); }
 
-HostCore::Config core_config() {
-  HostCore::Config config;
-  config.width = width;
-  config.height = height;
-  config.clock_us = now_us;
-  config.log = log_line;
-  config.option = HostCore::env_option;
-  config.gpu_by_default = true;
-  return config;
-}
-
 struct Host {
   android_app* app = nullptr;
   EGLDisplay display = EGL_NO_DISPLAY;
@@ -149,7 +138,7 @@ struct Host {
   EGLContext context = EGL_NO_CONTEXT;
   EGLSurface surface = EGL_NO_SURFACE;
   GlPresenter presenter;
-  HostCore core{core_config()};
+  HostCore core{HostCore::environment(width, height, now_us, log_line, /*gpu_by_default=*/true)};
   // The render thread stops for a collection (about 200ms on the Shield): the videos keep playing.
   static int video_during_collection(std::int64_t now) {
     video_layers::advance(now, 16667);

@@ -61,6 +61,18 @@ HostCore::HostCore(const Config& config)
 
 HostCore::~HostCore() { stop(); }
 
+HostCore::Config HostCore::environment(int width, int height, std::int64_t (*clock_us)(), void (*log)(const char* line),
+                                       bool gpu_by_default) {
+  Config config;
+  config.width = width;
+  config.height = height;
+  config.clock_us = clock_us;
+  config.log = log;
+  config.option = env_option;
+  config.gpu_by_default = gpu_by_default;
+  return config;
+}
+
 std::string HostCore::env_option(const char* name) {
   std::string variable = "ROA_";
   for (const char* c = name; *c; ++c) variable += *c == '-' ? '_' : static_cast<char>(std::toupper(*c));

@@ -55,6 +55,10 @@ public:
   };
 
   explicit HostCore(const Config& config);
+  // The configuration of a host whose options are ROA_* environment variables: the desktop, the Switch
+  // and Android.
+  static Config environment(int width, int height, std::int64_t (*clock_us)(), void (*log)(const char* line),
+                            bool gpu_by_default);
   HostCore(const HostCore&) = delete;
   HostCore& operator=(const HostCore&) = delete;
   // stop(), which a host calls itself while its GL context is still current.
