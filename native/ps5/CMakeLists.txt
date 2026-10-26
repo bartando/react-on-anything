@@ -33,11 +33,13 @@ set(ERUI_XFORM_CACHE_SLOTS 2 CACHE STRING "" FORCE)
 set(ERUI_MAX_ANIM_VALUES 1024 CACHE STRING "" FORCE)
 set(ERUI_MAX_VALUE_BINDINGS 8 CACHE STRING "" FORCE)
 # Photos are baked at half size and scaled bilinearly. The scaler and gradient assemble rows of up to
-# 2560 px (+7 KB per worker each over 800 px) and render wider ones in chunks. 256 image slots cost
-# +11 KB at 88 B per slot.
+# 2560 px (+7 KB per worker each over 800 px) and render wider ones in chunks. Image slots cost 88 B
+# each (512: +34 KB). The decoded cache (image_loader.hpp) holds 256 images and more while they are
+# in use, and the app's bundled pictures and video frames take slots beside it: at 256 the registry
+# filled before the cache evicted anything, and Anyfin's posters stopped loading after a few tabs.
 set(ERUI_BILINEAR_SCALE ON CACHE BOOL "" FORCE)
 set(ERUI_MAX_IMG_ROW_PIXELS 2560 CACHE STRING "" FORCE)
-set(ERUI_IMAGE_REGISTRY_MAX 256 CACHE STRING "" FORCE)
+set(ERUI_IMAGE_REGISTRY_MAX 512 CACHE STRING "" FORCE)
 # View backgroundGradient (linear and radial; also <Svg> gradient fills): about 5 KB of code, an 8 KB
 # colour ramp and a 10 KB row per render worker; nodes without a gradient pay nothing per frame.
 set(ERUI_GRADIENT ON CACHE BOOL "" FORCE)

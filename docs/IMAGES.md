@@ -113,7 +113,7 @@ page mounts, arrive over several frames instead of stalling one.
 
 | Budget | Value |
 | --- | --- |
-| Decoded cache | 64 MiB and at most 256 images; the PS5 host keeps 64 MiB with a heap of 256 MiB or more, 40 MiB from 192 MiB and 24 MiB below. Images in use are never evicted, so a screen that draws more than that exceeds it; unused ones are evicted least recently used first |
+| Decoded cache | 64 MiB and at most 256 images (the engine registers up to 512, for bundled pictures and video frames beside them); the PS5 host keeps 64 MiB with a heap of 256 MiB or more, 40 MiB from 192 MiB and 24 MiB below. Images in use are never evicted, so a screen that draws more than that exceeds it; unused ones are evicted least recently used first |
 | Encoded cache | 4 MiB of recently fetched bytes by URL, so the same image at another size decodes without a second fetch. Loads of a URL already being fetched join that request |
 | Decode | Up to four images at a time, in the same priority order. A decode is counted at 8 bytes per source pixel (it holds about 4.5 for JPEG and 8 for PNG until it finishes), and those running together stay within 40 MB, what one image at the source limit takes; one always runs |
 | In flight | No new fetch starts while encoded bytes held anywhere (responses, decode queue, encoded cache) pass 16 MiB; up to 32 connections, 8 while a download to a file runs |

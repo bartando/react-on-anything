@@ -17,6 +17,8 @@ enum class Fit : std::uint8_t { cover, contain, stretch, none };
 // in use are never evicted, so a screen that shows more than this exceeds it. set_cache_bytes() sizes
 // it for the host's heap.
 constexpr std::size_t kCacheBytes = 64 * 1024 * 1024;
+// The engine's image registry (ERUI_IMAGE_REGISTRY_MAX, native/ps5/CMakeLists.txt) stays well above
+// this: every cached image holds a slot there, and so do bundled pictures and video frames.
 constexpr std::size_t kCacheEntries = 256;
 // Larger responses fail. Store covers and 1920x1080 screenshots measure under 2 MiB.
 constexpr std::size_t kMaxEncodedBytes = 4 * 1024 * 1024;
