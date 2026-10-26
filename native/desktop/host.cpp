@@ -240,7 +240,9 @@ struct Host {
     // ROA_RENDER_WORKERS=1 renders single-core, for comparisons.
     const char* workers = std::getenv("ROA_RENDER_WORKERS");
     // The GPU renderer needs the ops in drawing order: one worker.
-    const bool gpu_drawing = std::getenv("ROA_GPU") != nullptr;
+    // Opt-in on the desktop, with ROA_GPU set to anything but 0, as the Switch and Android read it.
+    const char* gpu_option = std::getenv("ROA_GPU");
+    const bool gpu_drawing = gpu_option && std::strcmp(gpu_option, "0") != 0;
     const bool gpu_mirroring = !gpu_drawing && std::getenv("ROA_GPU_MIRROR") != nullptr;
     render_worker_count = render_workers::start(gpu_drawing || gpu_mirroring ? 1
                                                 : workers && std::atoi(workers) > 0 ? std::atoi(workers)
