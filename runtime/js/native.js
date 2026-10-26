@@ -24,9 +24,12 @@ function host() {
  * @typedef {{id: number, name: string}} User
  * @typedef {{model: string | null, firmware: string | null, cpuTemperature: number | null,
  *   socTemperature: number | null, cpuFrequency: number | null, freeMemory: number | null,
- *   processTime: number | null, language: string | null}} Device
+ *   processTime: number | null, language: string | null, battery: number | null, charging: boolean | null,
+ *   network: 'wifi' | 'ethernet' | null, wifiSignal: number | null}} Device
  *   Temperatures in °C, frequency in Hz, memory in bytes, process time in µs; language is the
- *   system language as a BCP 47 tag ('en-US', 'pt-BR', 'zh-Hans').
+ *   system language as a BCP 47 tag ('en-US', 'pt-BR', 'zh-Hans'). `battery` is % charged and
+ *   `charging` whether a charger is in, both null without a battery (the Switch has one); `network` is
+ *   how the device is online (null offline or unknown), `wifiSignal` its Wi-Fi bars, 0 to 3.
  * @typedef {'up' | 'down' | 'left' | 'right' | 'cross' | 'circle' | 'triangle' | 'square' | 'l1' | 'r1'
  *   | 'l2' | 'r2' | 'l3' | 'r3' | 'options' | 'touchpad'} Button
  * @typedef {{connected: boolean, leftX: number, leftY: number, rightX: number, rightY: number,

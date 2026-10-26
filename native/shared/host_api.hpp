@@ -208,6 +208,10 @@ struct DeviceInfo {
   std::int64_t free_memory = -1;   // bytes available to the app
   std::int64_t process_time = -1;  // µs of CPU time used by this process
   char language[16] = "";          // system language, BCP 47 ("en-US", "zh-Hans")
+  int battery = -1;                // % charged, -1 without a battery
+  int charging = -1;               // 1 on a charger, 0 not, -1 without a battery
+  char network[16] = "";           // "wifi" or "ethernet" while online, else empty
+  int wifi_signal = -1;            // 0..3 bars on Wi-Fi, -1 otherwise
 };
 void device_info(DeviceInfo& info);
 

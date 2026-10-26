@@ -7,6 +7,9 @@
 #include "storage_stats.hpp"
 #include "audio/mixer.hpp"
 
+#include <CoreFoundation/CoreFoundation.h>
+#include <IOKit/ps/IOPSKeys.h>
+#include <IOKit/ps/IOPowerSources.h>
 #include <dirent.h>
 #include <mach/mach.h>
 #include <spawn.h>
@@ -113,6 +116,34 @@ bool resolve_path(const char* path, char* out, std::size_t size) {
   return written >= 0 && static_cast<std::size_t>(written) < size;
 }
 
+// The Mac's internal battery, if it has one: % charged and whether it is on a charger.
+void battery_info(DeviceInfo& info) {
+  CFTypeRef blob = IOPSCopyPowerSourcesInfo();
+  if (!blob) return;
+  CFArrayRef sources = IOPSCopyPowerSourcesList(blob);
+  for (CFIndex i = 0; sources && i < CFArrayGetCount(sources); ++i) {
+    CFDictionaryRef source = IOPSGetPowerSourceDescription(blob, CFArrayGetValueAtIndex(sources, i));
+    if (!source) continue;
+    auto type = static_cast<CFStringRef>(CFDictionaryGetValue(source, CFSTR(kIOPSTypeKey)));
+    if (!type || CFStringCompare(type, CFSTR(kIOPSInternalBatteryType), 0) != kCFCompareEqualTo) continue;
+    int current = 0, max = 0;
+    auto number = [&](const char* key, int& out) {
+      CFStringRef name = CFStringCreateWithCString(nullptr, key, kCFStringEncodingUTF8);
+      auto value = static_cast<CFNumberRef>(CFDictionaryGetValue(source, name));
+      CFRelease(name);
+      return value && CFNumberGetValue(value, kCFNumberIntType, &out);
+    };
+    if (number(kIOPSCurrentCapacityKey, current) && number(kIOPSMaxCapacityKey, max) && max > 0) {
+      info.battery = current * 100 / max;
+      auto state = static_cast<CFStringRef>(CFDictionaryGetValue(source, CFSTR(kIOPSPowerSourceStateKey)));
+      info.charging = state && CFStringCompare(state, CFSTR(kIOPSACPowerValue), 0) == kCFCompareEqualTo;
+    }
+    break;
+  }
+  if (sources) CFRelease(sources);
+  CFRelease(blob);
+}
+
 void device_info(DeviceInfo& info) {
   char model[48];
   sysctl_string("hw.model", model, sizeof model);
@@ -131,6 +162,7 @@ void device_info(DeviceInfo& info) {
     info.process_time = (static_cast<std::int64_t>(usage.ru_utime.tv_sec) + usage.ru_stime.tv_sec) * 1000000 +
                         usage.ru_utime.tv_usec + usage.ru_stime.tv_usec;
   environment_language(info.language, sizeof info.language);
+  battery_info(info);
 }
 
 bool foreground_user(User& user) {

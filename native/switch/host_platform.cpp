@@ -106,6 +106,27 @@ void device_info(DeviceInfo& info) {
   if (R_SUCCEEDED(svcGetInfo(&total, InfoType_TotalMemorySize, CUR_PROCESS_HANDLE, 0)) &&
       R_SUCCEEDED(svcGetInfo(&used, InfoType_UsedMemorySize, CUR_PROCESS_HANDLE, 0)))
     info.free_memory = static_cast<std::int64_t>(total - used);
+  u32 percent = 0;
+  PsmChargerType charger = PsmChargerType_Unconnected;
+  if (R_SUCCEEDED(psmInitialize())) {
+    if (R_SUCCEEDED(psmGetBatteryChargePercentage(&percent)) && R_SUCCEEDED(psmGetChargerType(&charger))) {
+      info.battery = static_cast<int>(percent);
+      info.charging = charger != PsmChargerType_Unconnected;
+    }
+    psmExit();
+  }
+  NifmInternetConnectionType type{};
+  NifmInternetConnectionStatus status{};
+  u32 strength = 0;
+  if (R_SUCCEEDED(nifmInitialize(NifmServiceType_User))) {
+    if (R_SUCCEEDED(nifmGetInternetConnectionStatus(&type, &strength, &status)) &&
+        status == NifmInternetConnectionStatus_Connected) {
+      const bool wifi = type == NifmInternetConnectionType_WiFi;
+      std::snprintf(info.network, sizeof info.network, "%s", wifi ? "wifi" : "ethernet");
+      if (wifi) info.wifi_signal = static_cast<int>(strength);
+    }
+    nifmExit();
+  }
 }
 
 bool foreground_user(User& user) {
