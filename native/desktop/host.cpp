@@ -658,7 +658,8 @@ int main(int argc, char** argv) {
     }
     if (JsProfiler& profiler = host.core.profiler; profiler.running()) {
       profiler.stop();
-      const char* path = std::getenv("ROA_PROFILE");
+      // A script's `profile` step can start it without ROA_PROFILE.
+      const char* path = std::getenv("ROA_PROFILE") ? std::getenv("ROA_PROFILE") : "profile.folded";
       std::printf("profile: %llu samples, %s %s\n", static_cast<unsigned long long>(profiler.samples()),
                   profiler.write(path) ? "saved to" : "could not write", path);
     }

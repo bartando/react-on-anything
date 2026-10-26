@@ -13,7 +13,7 @@ struct GamepadState;
 // Scripted controller actions for unattended profiling, e.g. "wait:3000,right*3,confirm,quit".
 // Steps are separated by commas or whitespace. An action takes one frame; `action*N` repeats it at
 // the held-key repeat interval; `wait:MS` pauses for wall-clock milliseconds; `quit` asks the host
-// to close; `shot:NAME` asks it to save the frame on screen as NAME.bmp; `swipe:DIRECTION:TRAVEL`
+// to close; `profile` starts the JavaScript profile there (see HostCore::play_script); `shot:NAME` asks it to save the frame on screen as NAME.bmp; `swipe:DIRECTION:TRAVEL`
 // slides a touchpad finger TRAVEL (0..0.5 of the pad) from its middle, one `touch:X,Y` sample per
 // frame, then `touch:up`, which the host passes on as touchpad input; `tap:X:Y` and
 // `drag:X1:Y1:X2:Y2` put a finger on a touchscreen in screen px the same way (`screen:X,Y` samples,

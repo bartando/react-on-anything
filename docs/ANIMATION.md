@@ -536,7 +536,9 @@ records the running stack, and when the run ends the host writes folded stacks
 to `dev/profile.folded` (or the given path): one line per stack, outermost frame
 first, frames as `name@line`, then the microseconds charged to it. Flame-graph
 tools read the format. Lines are those of `.build/<app>/generated/app.bundle.js`,
-which also identifies React's minified internals. Time inside a native call is
+which also identifies React's minified internals. A `profile` step in the input
+script drops what was sampled before it, so the profile covers only what the
+script does next (one action repeated, say) and not the launch. Time inside a native call is
 charged to the first sample after it returns, so bridge and engine calls are
 undercounted; the frame-time log measures those.
 

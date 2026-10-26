@@ -26,6 +26,8 @@ public:
   void start(JSRuntime* runtime, std::int64_t interval_us);
   void stop();
   bool running() const { return runtime_ != nullptr; }
+  // Drops what was sampled so far: a script's `profile` step starts the profile there.
+  void clear() { stacks_.clear(); samples_ = 0; }
   bool write(const char* path) const;
   std::uint64_t samples() const { return samples_; }
 

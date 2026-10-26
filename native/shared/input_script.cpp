@@ -173,13 +173,13 @@ bool InputScript::parse(const char* text, char* error, std::size_t size) {
       }
       token.resize(star);
     }
-    const char* action = token == "quit" ? "quit" : nullptr;
+    const char* action = token == "quit" ? "quit" : token == "profile" ? "profile" : nullptr;
     for (const char* known : kActionNames)
       if (token == known) action = known;
     if (!action) {
       std::string known;
       for (const char* name : kActionNames) known += std::string(name) + ", ";
-      std::snprintf(error, size, "unknown action '%s' (use %squit, wait:MS, shot:NAME, swipe:DIRECTION:TRAVEL, tap:X:Y, drag:X1:Y1:X2:Y2, finger:X:Y, finger:up, hold:, release:, trigger:)",
+      std::snprintf(error, size, "unknown action '%s' (use %squit, profile, wait:MS, shot:NAME, swipe:DIRECTION:TRAVEL, tap:X:Y, drag:X1:Y1:X2:Y2, finger:X:Y, finger:up, hold:, release:, trigger:)",
                     token.c_str(), known.c_str());
       return false;
     }

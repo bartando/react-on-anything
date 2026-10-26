@@ -306,6 +306,11 @@ bool HostCore::play_script(std::uint64_t now_ms) {
   logf("[ROA] script: %s", action);
   if (!std::strcmp(action, "quit")) {
     quit_requested_ = true;
+  } else if (!std::strcmp(action, "profile")) {
+    // The profile covers what follows, not the launch before it. A host that was not profiling
+    // samples from here, every millisecond; the desktop and the PS5 write it when the run ends.
+    profiler.clear();
+    if (!profiler.running()) profiler.start(JS_GetRuntime(er_runtime_context()), 1000);
   } else if (VirtualPad::is_step(action)) {
     char error[160];
     if (!virtual_pad.apply(action, now_ms, error, sizeof error)) logf("[ROA] script: %s", error);
