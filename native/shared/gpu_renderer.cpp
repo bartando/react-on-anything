@@ -173,8 +173,7 @@ vec4 fetch(ivec2 p) {
 // and the head's place on the perimeter and the tail's length, as fractions of it.
 vec4 g_rect, g_radii, g_fill, g_edges, g_inner_radii;
 vec4 g_edge_color[4];
-vec4 g_stop_color[4];
-float g_stop_pos[4];
+vec4 g_stop0, g_stop1, g_stop2, g_stop3, g_stop_pos;
 int g_mode, g_stop_count, g_step, g_lut_n;
 vec2 g_dir;
 float g_min_p, g_to_idx;
@@ -216,21 +215,31 @@ vec4 sweep(vec2 c) {
   return g_fill * (cov * sweep_alpha(perimeter_at(p, g_line.x, g_line.y, g_line.z)));
 }
 // Gradients as the software ramp: a table of n premultiplied 8.8 colours, read at a fixed-point index and
-// dithered with a 4x4 Bayer threshold per screen pixel.
-const int kBayer[16] = int[16](0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5);
+// dithered with a 4x4 Bayer threshold per screen pixel. No array is indexed at run time: on the Shield's
+// Tegra one made every draw slower, gradient or not, and Home took 26ms of GPU a frame, not 11.
 vec4 premul_f(vec4 s) { return vec4(s.x, s.y * s.x / 255.0, s.z * s.x / 255.0, s.w * s.x / 255.0); }
+vec4 stop_color(int i) { return i == 0 ? g_stop0 : i == 1 ? g_stop1 : i == 2 ? g_stop2 : g_stop3; }
+float stop_pos(int i) { return i == 0 ? g_stop_pos.x : i == 1 ? g_stop_pos.y : i == 2 ? g_stop_pos.z : g_stop_pos.w; }
+// The 4x4 Bayer matrix (0, 8, 2, 10 / 12, 4, 14, 6 / 3, 11, 1, 9 / 15, 7, 13, 5): x ^ y and y, bits
+// interleaved and reversed.
+int bayer(ivec2 p) {
+  int x = p.x & 3, y = p.y & 3, d = x ^ y;
+  return (d & 1) << 3 | (y & 1) << 2 | (d & 2) | (y >> 1);
+}
 vec4 lut(int idx) {
   float t = float(idx) / float(g_lut_n - 1);
   int last = g_stop_count - 1;
   vec4 c;
-  if (t <= g_stop_pos[0]) c = premul_f(g_stop_color[0]);
-  else if (t >= g_stop_pos[last]) c = premul_f(g_stop_color[last]);
+  if (t <= g_stop_pos.x) c = premul_f(g_stop0);
+  else if (t >= stop_pos(last)) c = premul_f(stop_color(last));
   else {
     int seg = 0;
-    for (int i = 0; i < 3; i++) if (i < last && t > g_stop_pos[i + 1]) seg = i + 1;
-    vec4 c0 = premul_f(g_stop_color[seg]), c1 = premul_f(g_stop_color[seg + 1]);
-    float span = g_stop_pos[seg + 1] - g_stop_pos[seg];
-    float lt = span > 0.0 ? (t - g_stop_pos[seg]) / span : 1.0;
+    if (last > 0 && t > g_stop_pos.y) seg = 1;
+    if (last > 1 && t > g_stop_pos.z) seg = 2;
+    if (last > 2 && t > g_stop_pos.w) seg = 3;
+    vec4 c0 = premul_f(stop_color(seg)), c1 = premul_f(stop_color(seg + 1));
+    float p0 = stop_pos(seg), span = stop_pos(seg + 1) - p0;
+    float lt = span > 0.0 ? (t - p0) / span : 1.0;
     c = c0 + (c1 - c0) * lt;
   }
   vec4 v = floor(c * 256.0 + 0.5);
@@ -248,7 +257,7 @@ vec4 gradient(vec2 c) {
     vec2 d = vec2(local) - centre;
     idx = min(int(sqrt(d.x * d.x + d.y * d.y) * g_to_idx + 0.5), g_lut_n - 1);
   }
-  float threshold = float(kBayer[(screen.y & 3) * 4 + (screen.x & 3)] * 16 + 8);
+  float threshold = float(bayer(screen) * 16 + 8);
   vec4 argb = floor((lut(idx) + threshold) / 256.0);
   return vec4(argb.yzw, argb.x) / 255.0;
 }
@@ -277,9 +286,12 @@ vec4 shape(vec2 c, int mode) {
   float outer = rbox(c, g_rect, g_radii);
   if (mode == 0) return rec(4) * outer;
   if (mode >= 3) {
-    for (int i = 0; i < 4; i++) g_stop_color[i] = rec(4 + i);
-    vec4 pos = rec(8), a = rec(9), b = rec(10);
-    g_stop_pos = float[4](pos.x, pos.y, pos.z, pos.w);
+    g_stop0 = rec(4);
+    g_stop1 = rec(5);
+    g_stop2 = rec(6);
+    g_stop3 = rec(7);
+    g_stop_pos = rec(8);
+    vec4 a = rec(9), b = rec(10);
     g_stop_count = int(a.x);
     g_dir = a.yz;
     g_min_p = a.w;
